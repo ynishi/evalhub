@@ -27,6 +27,7 @@
 //! | `attachment_missing`     | 409    | `attachments[].sha256` not uploaded and confirmed                    |
 //! | `label_in_use`           | 409    | `@{label}` already names another version                             |
 //! | `namespace_in_use`       | 409    | the organisation slug is already a user or an organisation           |
+//! | `registry_entry_exists`  | 409    | that registry address is taken; entries are immutable                |
 //!
 //! Other statuses carry no body of this shape: `404` for anything the caller
 //! may not know exists (including private records), `403` for a token
@@ -69,13 +70,19 @@ pub enum ErrorCode {
     LabelInUse,
     /// The requested organisation slug is already a user or an organisation.
     NamespaceInUse,
+    /// A registry entry already exists at that address. Entries are
+    /// immutable, so a correction is a new version.
+    RegistryEntryExists,
 }
 
 impl ErrorCode {
     /// The HTTP status this code is returned with.
     pub const fn status(self) -> u16 {
         match self {
-            ErrorCode::AttachmentMissing | ErrorCode::LabelInUse | ErrorCode::NamespaceInUse => 409,
+            ErrorCode::AttachmentMissing
+            | ErrorCode::LabelInUse
+            | ErrorCode::NamespaceInUse
+            | ErrorCode::RegistryEntryExists => 409,
             _ => 422,
         }
     }

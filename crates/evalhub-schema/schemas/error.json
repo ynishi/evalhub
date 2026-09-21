@@ -84,6 +84,11 @@
           "description": "The requested organisation slug is already a user or an organisation.",
           "type": "string",
           "const": "namespace_in_use"
+        },
+        {
+          "description": "A registry entry already exists at that address. Entries are\nimmutable, so a correction is a new version.",
+          "type": "string",
+          "const": "registry_entry_exists"
         }
       ]
     },

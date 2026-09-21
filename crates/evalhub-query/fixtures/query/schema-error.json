@@ -1,0 +1,5 @@
+{"where": {"and": [
+  {"path": "model.id"},
+  {"or": {}},
+  {"path": "results", "op": "any", "match": {}}
+]}}

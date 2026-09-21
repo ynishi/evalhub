@@ -45,8 +45,10 @@
 //!
 //! `?expand=fingerprints,badges,changed,relations`, comma-separated.
 //! `badges` and `changed` are always present today; `fingerprints` adds
-//! the hex map; `relations` is accepted and reserved for the relations
-//! handlers (it is not populated by this module).
+//! the hex map; `relations` adds the version's outgoing edges, reduced to
+//! a commitment where the caller may not see the endpoint. `relations` is
+//! the version's own edges only — the graph beyond them is
+//! `GET …/relations`, which walks it.
 //!
 //! # Listing
 //!
@@ -279,6 +281,9 @@ pub struct VersionEnvelope {
     /// Per-facet fingerprints as hex, with `expand=fingerprints`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fingerprints: Option<BTreeMap<String, String>>,
+    /// The version's outgoing edges, with `expand=relations`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relations: Option<Vec<crate::api::relations::RelationDto>>,
     /// Present when the version was withdrawn; `record` is then absent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tombstone: Option<TombstoneDto>,
@@ -307,6 +312,7 @@ impl VersionEnvelope {
             badges: meta.badges,
             record,
             fingerprints: None,
+            relations: None,
             tombstone: None,
         }
     }
@@ -661,6 +667,15 @@ async fn get(
         env.fingerprints = Some(
             map.into_iter()
                 .map(|(facet, bytes)| (facet, hex::encode(bytes)))
+                .collect(),
+        );
+    }
+    if expand.contains(&"relations") {
+        let edges = evalhub_store::relations::outgoing(pool, version_id, None, &caller_ns).await?;
+        env.relations = Some(
+            edges
+                .into_iter()
+                .map(crate::api::relations::RelationDto::from)
                 .collect(),
         );
     }

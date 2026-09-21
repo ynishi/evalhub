@@ -786,10 +786,11 @@ async fn relations_resolve_to_versions_or_stay_textual() {
 async fn badges_come_from_the_callers_rule_over_the_stores_facts() {
     let db = common::db().await;
     alice(&db.pool).await;
+    // `core/pass_rate` is seeded by the core-registry migration; only the
+    // harness needs registering here.
     sqlx::query(
         "INSERT INTO registry (kind, ns, id, version, body) VALUES
-         ('harnesses', 'acme', 'bench', '1.0', '{}'),
-         ('metrics', 'core', 'pass_rate', '1', '{}')",
+         ('harnesses', 'acme', 'bench', '1.0', '{}')",
     )
     .execute(&db.pool)
     .await
@@ -1319,6 +1320,8 @@ async fn users_namespaces_and_tokens() {
         kinds,
         vec![
             ("acme".to_owned(), "org".to_owned()),
+            // The namespace the core registry is published under.
+            ("core".to_owned(), "org".to_owned()),
             ("dave".to_owned(), "user".to_owned())
         ]
     );

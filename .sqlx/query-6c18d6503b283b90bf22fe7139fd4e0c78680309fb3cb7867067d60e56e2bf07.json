@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT body, badges FROM versions\n         WHERE version_id = $1 AND tombstoned_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "body",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "versions",
+            "name": "body"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "badges",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "versions",
+            "name": "badges"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      true,
+      false
+    ]
+  },
+  "hash": "6c18d6503b283b90bf22fe7139fd4e0c78680309fb3cb7867067d60e56e2bf07"
+}

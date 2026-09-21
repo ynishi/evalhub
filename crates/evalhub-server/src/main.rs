@@ -243,8 +243,32 @@ async fn serve(loaded: Loaded) -> anyhow::Result<()> {
         )
     });
 
+    // The query vocabulary: facet paths from the committed schema now,
+    // extension paths as the index builder applies them.
+    let path_tables = evalhub_server::state::PathTableHandle::from_schema();
+    match evalhub_store::registry::ext_schemas_applied(&pool).await {
+        Ok(entries) => {
+            path_tables
+                .rebuild(&evalhub_server::jobs::to_query_ext(&entries))
+                .await;
+        }
+        Err(e) => warn!(error = %format!("{e:#}"), "loading extension schemas failed"),
+    }
+    // The index builder finishes extension schemas registered while the
+    // server was down and republishes the tables; the badge sweep brings
+    // registry-derived badges up to date on versions stored before their
+    // entry existed.
+    let index_build = evalhub_server::jobs::spawn_index_build(
+        pool.clone(),
+        path_tables.clone(),
+        Duration::from_secs(30),
+    );
+    let badge_recompute =
+        evalhub_server::jobs::spawn_badge_recompute(pool.clone(), Duration::from_secs(5 * 60));
+
     let bind = loaded.config.bind.clone();
-    let app = evalhub_server::api::router(Arc::new(loaded.config), Some(pool), objects);
+    let app =
+        evalhub_server::api::router(Arc::new(loaded.config), Some(pool), objects, path_tables);
     let listener = TcpListener::bind(&bind)
         .await
         .with_context(|| format!("binding {bind}"))?;
@@ -258,6 +282,8 @@ async fn serve(loaded: Loaded) -> anyhow::Result<()> {
     if let Some(gc) = gc {
         gc.abort();
     }
+    index_build.abort();
+    badge_recompute.abort();
     result?;
     info!("evalhub stopped");
     Ok(())

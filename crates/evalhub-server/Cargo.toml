@@ -36,6 +36,7 @@ figment.workspace = true
 secrecy.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_norway.workspace = true
 schemars.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true

@@ -983,6 +983,26 @@ pub async fn load_fingerprints(
     Ok(rows.into_iter().map(|r| (r.facet, r.fingerprint)).collect())
 }
 
+/// The canonical body and current badges of one live version, by id.
+///
+/// The badge recomputation job needs both: the body to re-derive the
+/// badges that come from the record, and the badges it already has,
+/// because `refs_resolved` records what was true at ingest and is never
+/// recomputed. A tombstoned version has no body and is not returned.
+pub async fn body_and_badges(
+    pool: &PgPool,
+    version_id: Uuid,
+) -> Result<Option<(Value, Vec<String>)>, StoreError> {
+    let row = sqlx::query!(
+        "SELECT body, badges FROM versions
+         WHERE version_id = $1 AND tombstoned_at IS NULL",
+        version_id,
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.and_then(|r| r.body.map(|body| (body, r.badges))))
+}
+
 /// Lock `{type}/{ns}/{name}` for a write and return its id and
 /// visibility, or [`StoreError::RecordNotFound`].
 async fn lock_record(

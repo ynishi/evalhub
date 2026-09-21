@@ -55,6 +55,9 @@ serde_json_canonicalizer = "0.3"
 dsl-kit-macros = "0.11"
 dsl-kit-schema = "0.11"
 dsl-kit-parse = "0.11"
+# The `DslNode` derive expands to `::dsl_kit_core::…`, and `DslBuild`
+# mints ids from its `IdGen`, so the AST's crate names it directly.
+dsl-kit-core = "0.11"
 
 # storage
 sqlx = { version = "0.9", default-features = false, features = [
@@ -82,6 +85,10 @@ aide = { version = "=0.16.0-alpha.4", features = ["axum", "axum-json", "axum-que
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.7", features = ["trace", "compression-gzip", "set-header", "limit"] }
 rust-embed = "8"
+# YAML for the model-index export. `serde_yaml` is unmaintained and its
+# other successor `serde_yml` publishes itself as deprecated; this is the
+# maintained fork.
+serde_norway = "0.9"
 clap = { version = "4", features = ["derive", "env"] }
 figment = { version = "0.10", features = ["toml", "env"] }
 secrecy = { version = "0.10", features = ["serde"] }

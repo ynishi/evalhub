@@ -12,7 +12,12 @@ use evalhub_server::api::router;
 use evalhub_server::config::Config;
 
 fn app() -> axum::Router {
-    router(Arc::new(Config::default()), None, None)
+    router(
+        Arc::new(Config::default()),
+        None,
+        None,
+        evalhub_server::state::PathTableHandle::from_schema(),
+    )
 }
 
 async fn get(path: &str) -> (StatusCode, serde_json::Value) {

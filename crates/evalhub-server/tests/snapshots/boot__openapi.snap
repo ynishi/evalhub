@@ -252,6 +252,21 @@ expression: body
         ],
         "type": "object"
       },
+      "Dir": {
+        "description": "Sort direction.",
+        "oneOf": [
+          {
+            "const": "asc",
+            "description": "Ascending.",
+            "type": "string"
+          },
+          {
+            "const": "desc",
+            "description": "Descending.",
+            "type": "string"
+          }
+        ]
+      },
       "DirectionParam": {
         "description": "Which edges a traversal follows.",
         "oneOf": [
@@ -304,6 +319,88 @@ expression: body
         "required": [
           "from",
           "type"
+        ],
+        "type": "object"
+      },
+      "EntryDto": {
+        "description": "One registry entry.",
+        "properties": {
+          "body": {
+            "description": "The definition, whose shape depends on the kind."
+          },
+          "created_at": {
+            "description": "When it was registered.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "description": "Identifier within the namespace.",
+            "type": "string"
+          },
+          "kind": {
+            "description": "`metrics`, `harnesses`, `relation_types` or `ext_schemas`.",
+            "type": "string"
+          },
+          "ns": {
+            "description": "Namespace that owns it.",
+            "type": "string"
+          },
+          "state": {
+            "description": "`applied`, or `applying` while its indexes are being built.",
+            "type": "string"
+          },
+          "version": {
+            "description": "Version of the entry. Entries are immutable; a change is a new one.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "ns",
+          "id",
+          "version",
+          "body",
+          "state",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "EntryPage": {
+        "description": "A page of entries. The registry is small, so this pages by offset\nrather than by cursor.",
+        "properties": {
+          "items": {
+            "description": "The entries, ordered by kind, namespace, id and version.",
+            "items": {
+              "$ref": "#/components/schemas/EntryDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "EntryPath": {
+        "description": "Path of one entry: `/registry/{kind}/{ns}/{id}` where `id` carries\n`@{version}`.",
+        "properties": {
+          "id": {
+            "description": "Identifier followed by `@{version}`.",
+            "type": "string"
+          },
+          "kind": {
+            "description": "`metrics`, `harnesses`, `relation_types` or `ext_schemas`.",
+            "type": "string"
+          },
+          "ns": {
+            "description": "Namespace that owns the entry.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "ns",
+          "id"
         ],
         "type": "object"
       },
@@ -374,6 +471,11 @@ expression: body
             "const": "namespace_in_use",
             "description": "The requested organisation slug is already a user or an organisation.",
             "type": "string"
+          },
+          {
+            "const": "registry_entry_exists",
+            "description": "A registry entry already exists at that address. Entries are\nimmutable, so a correction is a new version.",
+            "type": "string"
           }
         ]
       },
@@ -421,6 +523,44 @@ expression: body
         },
         "required": [
           "errors"
+        ],
+        "type": "object"
+      },
+      "Expand": {
+        "description": "Optional parts of a version that a read can include.",
+        "oneOf": [
+          {
+            "const": "relations",
+            "description": "The version's edges.",
+            "type": "string"
+          },
+          {
+            "const": "badges",
+            "description": "The version's badges.",
+            "type": "string"
+          },
+          {
+            "const": "fingerprints",
+            "description": "The seven facet fingerprints.",
+            "type": "string"
+          },
+          {
+            "const": "changed",
+            "description": "The top-level keys that changed from the previous version.",
+            "type": "string"
+          }
+        ]
+      },
+      "ExportQuery": {
+        "description": "Query string of the export endpoints.",
+        "properties": {
+          "format": {
+            "description": "`hf-model-index` or `bundle`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "format"
         ],
         "type": "object"
       },
@@ -508,6 +648,19 @@ expression: body
         },
         "required": [
           "items"
+        ],
+        "type": "object"
+      },
+      "KindPath": {
+        "description": "Path of `GET /registry/{kind}`.",
+        "properties": {
+          "kind": {
+            "description": "`metrics`, `harnesses`, `relation_types` or `ext_schemas`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
         ],
         "type": "object"
       },
@@ -872,6 +1025,31 @@ expression: body
         ],
         "type": "object"
       },
+      "Page_for_QueryHitDto": {
+        "additionalProperties": false,
+        "description": "One page of results.\n\nThe schema name carries the item type (`Page_for_VersionEnvelope`), so a\ngenerated client gets one page type per item type instead of `Page` and\n`Page2`.",
+        "properties": {
+          "items": {
+            "description": "The items on this page.",
+            "items": {
+              "$ref": "#/components/schemas/QueryHitDto"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "default": null,
+            "description": "Cursor for the next page, or `null` on the last page.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "Page_for_VersionEnvelope": {
         "additionalProperties": false,
         "description": "One page of results.\n\nThe schema name carries the item type (`Page_for_VersionEnvelope`), so a\ngenerated client gets one page type per item type instead of `Page` and\n`Page2`.",
@@ -910,6 +1088,300 @@ expression: body
         },
         "type": "object"
       },
+      "QueryHitDto": {
+        "description": "One matched version, with what the hub knows about it.",
+        "properties": {
+          "badges": {
+            "description": "Badges awarded at ingest.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "changed": {
+            "description": "Top-level keys whose value differs from the previous version.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "content_hash": {
+            "description": "Hex sha256 of the canonical record.",
+            "type": "string"
+          },
+          "created_at": {
+            "description": "When the hub stored this version.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "fingerprints": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Per-facet fingerprints as hex, with `expand=fingerprints`.",
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "id": {
+            "description": "Identifier of the named record, stable across versions (ULID).",
+            "type": "string"
+          },
+          "label": {
+            "description": "Client-chosen label of this version, if it has one.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "description": "Name of the record within the namespace.",
+            "type": "string"
+          },
+          "ns": {
+            "description": "Namespace the record lives in.",
+            "type": "string"
+          },
+          "record": {
+            "description": "The canonical record."
+          },
+          "relations": {
+            "description": "Outgoing edges, with `expand=relations`.",
+            "items": {
+              "$ref": "#/components/schemas/RelationDto"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "seq": {
+            "description": "Sequence number within the name.",
+            "format": "int32",
+            "type": "integer"
+          },
+          "version_id": {
+            "description": "Identifier of this version (ULID).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "version_id",
+          "ns",
+          "name",
+          "seq",
+          "content_hash",
+          "created_at",
+          "changed",
+          "badges"
+        ],
+        "type": "object"
+      },
+      "QueryRequest": {
+        "additionalProperties": false,
+        "description": "The body of `POST /cards/query` and `POST /evals/query`.",
+        "properties": {
+          "cursor": {
+            "description": "Opaque cursor from a previous page's `next_cursor`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expand": {
+            "description": "Extra fields to include on each item.",
+            "items": {
+              "$ref": "#/components/schemas/Expand"
+            },
+            "type": "array"
+          },
+          "limit": {
+            "description": "Page size. The server clamps it to its maximum.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "sort": {
+            "description": "Sort keys, applied in order.",
+            "items": {
+              "$ref": "#/components/schemas/Sort"
+            },
+            "type": "array"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VersionSelector"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Which versions to search. Defaults to `latest`."
+          },
+          "where": {
+            "$defs": {
+              "filter": {
+                "description": "A filter: a connective or a leaf.",
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "and": {
+                        "items": {
+                          "$ref": "#/$defs/filter"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "required": [
+                      "and"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "or": {
+                        "items": {
+                          "$ref": "#/$defs/filter"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "required": [
+                      "or"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "not": {
+                        "$ref": "#/$defs/filter"
+                      }
+                    },
+                    "required": [
+                      "not"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "description": "A scalar comparison.",
+                    "properties": {
+                      "op": {
+                        "enum": [
+                          "eq",
+                          "ne",
+                          "gt",
+                          "gte",
+                          "lt",
+                          "lte",
+                          "in",
+                          "prefix",
+                          "contains"
+                        ]
+                      },
+                      "path": {
+                        "type": "string"
+                      },
+                      "value": true
+                    },
+                    "required": [
+                      "path",
+                      "op",
+                      "value"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "description": "The path has a value, `null` included.",
+                    "properties": {
+                      "op": {
+                        "const": "exists"
+                      },
+                      "path": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "path",
+                      "op"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "description": "At least one element of an array path satisfies every term.",
+                    "properties": {
+                      "match": {
+                        "additionalProperties": {
+                          "description": "A literal (meaning `eq`), or an operator and a literal.",
+                          "oneOf": [
+                            {
+                              "type": [
+                                "string",
+                                "number",
+                                "boolean",
+                                "null"
+                              ]
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "op": {
+                                  "enum": [
+                                    "eq",
+                                    "ne",
+                                    "gt",
+                                    "gte",
+                                    "lt",
+                                    "lte",
+                                    "in",
+                                    "prefix",
+                                    "contains"
+                                  ]
+                                },
+                                "value": true
+                              },
+                              "required": [
+                                "value"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        },
+                        "type": "object"
+                      },
+                      "op": {
+                        "const": "any"
+                      },
+                      "path": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "path",
+                      "op",
+                      "match"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              }
+            },
+            "$ref": "#/$defs/filter"
+          }
+        },
+        "type": "object"
+      },
       "RecordPath": {
         "description": "Path of a record: `/{cards|evals}/{ns}/{name}`.",
         "properties": {
@@ -925,6 +1397,71 @@ expression: body
         "required": [
           "ns",
           "name"
+        ],
+        "type": "object"
+      },
+      "RegistryListQuery": {
+        "description": "Query string of `GET /registry/{kind}`.\n\nNamed for the registry rather than `ListQuery`, so that a generated\nclient gets one type per listing instead of `ListQuery` and\n`ListQuery2`.",
+        "properties": {
+          "limit": {
+            "description": "Page size, 1–200; default 50.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "ns": {
+            "description": "Only entries owned by this namespace.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "offset": {
+            "description": "How many entries to skip.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "RelationDto": {
+        "description": "An edge as returned by `POST …/relations`.",
+        "properties": {
+          "attrs": {
+            "description": "Free-form attributes."
+          },
+          "from": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TargetDto"
+              }
+            ],
+            "description": "The version the edge leaves."
+          },
+          "to": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TargetDto"
+              }
+            ],
+            "description": "The version or external reference it points at."
+          },
+          "type": {
+            "description": "Registry id of the relation type.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "type",
+          "to"
         ],
         "type": "object"
       },
@@ -983,6 +1520,29 @@ expression: body
         ],
         "type": "object"
       },
+      "Sort": {
+        "additionalProperties": false,
+        "description": "One sort key.",
+        "properties": {
+          "dir": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Dir"
+              }
+            ],
+            "description": "Direction."
+          },
+          "path": {
+            "description": "A query path (for example `results[core/pass_rate].value`).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "dir"
+        ],
+        "type": "object"
+      },
       "SortParam": {
         "description": "Sort orders of the list endpoints.",
         "oneOf": [
@@ -1002,6 +1562,99 @@ expression: body
             "type": "string"
           }
         ]
+      },
+      "TargetDto": {
+        "anyOf": [
+          {
+            "description": "A version on this hub the caller may see.",
+            "properties": {
+              "name": {
+                "description": "Record name.",
+                "type": "string"
+              },
+              "ns": {
+                "description": "Namespace of its record.",
+                "type": "string"
+              },
+              "record_type": {
+                "description": "`card` or `eval`.",
+                "type": "string"
+              },
+              "seq": {
+                "description": "Sequence number.",
+                "format": "int32",
+                "type": "integer"
+              },
+              "tombstoned": {
+                "description": "Whether the version has been tombstoned.",
+                "type": "boolean"
+              },
+              "version_id": {
+                "description": "The version.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "version_id",
+              "ns",
+              "name",
+              "seq",
+              "record_type",
+              "tombstoned"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A version the caller may not see: the commitment only.",
+            "properties": {
+              "content_hash": {
+                "description": "sha256 of the canonical body, so the reference is still pinned.",
+                "type": "string"
+              },
+              "private": {
+                "description": "Always `true`; marks the reduced form.",
+                "type": "boolean"
+              },
+              "version_id": {
+                "description": "The version it points at.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "private",
+              "version_id",
+              "content_hash"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A `{ns}/{name}@{seq}` that does not exist yet.",
+            "properties": {
+              "unresolved": {
+                "description": "The reference as written.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "unresolved"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "An `external:` or `hf:` target.",
+            "properties": {
+              "external": {
+                "description": "The reference as written.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "external"
+            ],
+            "type": "object"
+          }
+        ],
+        "description": "One endpoint of an edge."
       },
       "TokenDto": {
         "description": "One of the caller's tokens. The secret is not here; it was shown once.",
@@ -1221,6 +1874,16 @@ expression: body
           "record": {
             "description": "The canonical record. Absent in `POST` responses, in version lists,\nand for tombstones."
           },
+          "relations": {
+            "description": "The version's outgoing edges, with `expand=relations`.",
+            "items": {
+              "$ref": "#/components/schemas/RelationDto"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
           "seq": {
             "description": "Sequence number within the name, from 1, gap-free.",
             "format": "int32",
@@ -1252,6 +1915,21 @@ expression: body
           "badges"
         ],
         "type": "object"
+      },
+      "VersionSelector": {
+        "description": "Which versions a query considers.",
+        "oneOf": [
+          {
+            "const": "latest",
+            "description": "Only the latest non-tombstoned version of each name.",
+            "type": "string"
+          },
+          {
+            "const": "all",
+            "description": "Every non-tombstoned version.",
+            "type": "string"
+          }
+        ]
       },
       "VisibilityParam": {
         "description": "A record's visibility.",
@@ -1683,6 +2361,85 @@ expression: body
         "summary": "List cards"
       }
     },
+    "/api/v1/cards/query": {
+      "post": {
+        "description": "A typed filter over the record schema. Every path is checked against the schema and against what the indexes can serve, so a typo is `422 unknown_path` rather than an empty page, and an operator no index answers is `422 not_indexed` rather than a sequential scan. Paging is by opaque cursor; `expand` adds fingerprints or relations to each hit.",
+        "operationId": "query_cards",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QueryRequest"
+              }
+            }
+          },
+          "description": "The body of `POST /cards/query` and `POST /evals/query`.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_for_QueryHitDto"
+                }
+              }
+            },
+            "description": "One page of matching versions."
+          },
+          "400": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Failed to parse the request body as JSON"
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "415": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Expected request with `Content-Type: application/json`"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Search Cards"
+      }
+    },
     "/api/v1/cards/{ns}/{name}": {
       "delete": {
         "description": "Addresses one version with `@{seq}` and replaces its body with a tombstone carrying a reason. The version id, the content hash and `changed[]` remain, so relations pointing at it still resolve and show what happened.",
@@ -1982,6 +2739,79 @@ expression: body
           }
         },
         "summary": "Append Card version"
+      }
+    },
+    "/api/v1/cards/{ns}/{name}/export": {
+      "get": {
+        "description": "`format=hf-model-index` projects a Card's model, task and results onto the YAML a Hugging Face model card embeds, with a `source` link back to the version. The projection is lossy and one-way: the hub reads and writes converters rather than asking anyone to adopt its record format. An Eval has no results, so that format is `400` on one. `format=bundle` is `501` while its design is open.",
+        "operationId": "export_card",
+        "parameters": [
+          {
+            "description": "Record name, optionally followed by `@{seq}` or `@{label}` to\naddress one version.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Record name, optionally followed by `@{seq}` or `@{label}` to\naddress one version.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "Namespace: a user login or an organisation slug.",
+            "in": "path",
+            "name": "ns",
+            "required": true,
+            "schema": {
+              "description": "Namespace: a user login or an organisation slug.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "`hf-model-index` or `bundle`.",
+            "in": "query",
+            "name": "format",
+            "required": true,
+            "schema": {
+              "description": "`hf-model-index` or `bundle`.",
+              "type": "string"
+            },
+            "style": "form"
+          }
+        ],
+        "responses": {
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Export a Card"
       }
     },
     "/api/v1/cards/{ns}/{name}/label": {
@@ -2569,6 +3399,85 @@ expression: body
         "summary": "List evals"
       }
     },
+    "/api/v1/evals/query": {
+      "post": {
+        "description": "A typed filter over the record schema. Every path is checked against the schema and against what the indexes can serve, so a typo is `422 unknown_path` rather than an empty page, and an operator no index answers is `422 not_indexed` rather than a sequential scan. Paging is by opaque cursor; `expand` adds fingerprints or relations to each hit.",
+        "operationId": "query_evals",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QueryRequest"
+              }
+            }
+          },
+          "description": "The body of `POST /cards/query` and `POST /evals/query`.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_for_QueryHitDto"
+                }
+              }
+            },
+            "description": "One page of matching versions."
+          },
+          "400": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Failed to parse the request body as JSON"
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "415": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Expected request with `Content-Type: application/json`"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Search Evals"
+      }
+    },
     "/api/v1/evals/{ns}/{name}": {
       "delete": {
         "description": "Addresses one version with `@{seq}` and replaces its body with a tombstone carrying a reason. The version id, the content hash and `changed[]` remain, so relations pointing at it still resolve and show what happened.",
@@ -2950,6 +3859,79 @@ expression: body
           }
         },
         "summary": "Cards measured on this Eval"
+      }
+    },
+    "/api/v1/evals/{ns}/{name}/export": {
+      "get": {
+        "description": "`format=hf-model-index` projects a Card's model, task and results onto the YAML a Hugging Face model card embeds, with a `source` link back to the version. The projection is lossy and one-way: the hub reads and writes converters rather than asking anyone to adopt its record format. An Eval has no results, so that format is `400` on one. `format=bundle` is `501` while its design is open.",
+        "operationId": "export_eval",
+        "parameters": [
+          {
+            "description": "Record name, optionally followed by `@{seq}` or `@{label}` to\naddress one version.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Record name, optionally followed by `@{seq}` or `@{label}` to\naddress one version.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "Namespace: a user login or an organisation slug.",
+            "in": "path",
+            "name": "ns",
+            "required": true,
+            "schema": {
+              "description": "Namespace: a user login or an organisation slug.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "`hf-model-index` or `bundle`.",
+            "in": "query",
+            "name": "format",
+            "required": true,
+            "schema": {
+              "description": "`hf-model-index` or `bundle`.",
+              "type": "string"
+            },
+            "style": "form"
+          }
+        ],
+        "responses": {
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Export an Eval"
       }
     },
     "/api/v1/evals/{ns}/{name}/label": {
@@ -3722,6 +4704,283 @@ expression: body
           }
         },
         "summary": "Remove a member"
+      }
+    },
+    "/api/v1/registry/{kind}": {
+      "get": {
+        "description": "Metrics, harnesses, relation types or extension schemas. Public: the vocabulary is what a client needs to read a record.",
+        "operationId": "list_registry",
+        "parameters": [
+          {
+            "description": "`metrics`, `harnesses`, `relation_types` or `ext_schemas`.",
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "description": "`metrics`, `harnesses`, `relation_types` or `ext_schemas`.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "Page size, 1–200; default 50.",
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "description": "Page size, 1–200; default 50.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Only entries owned by this namespace.",
+            "in": "query",
+            "name": "ns",
+            "schema": {
+              "description": "Only entries owned by this namespace.",
+              "type": "string"
+            },
+            "style": "form"
+          },
+          {
+            "description": "How many entries to skip.",
+            "in": "query",
+            "name": "offset",
+            "schema": {
+              "description": "How many entries to skip.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "style": "form"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntryPage"
+                }
+              }
+            },
+            "description": "A page of entries. The registry is small, so this pages by offset\nrather than by cursor."
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "The vocabulary of one kind"
+      }
+    },
+    "/api/v1/registry/{kind}/{ns}/{id}": {
+      "get": {
+        "description": "`{id}` carries the version: `pass_rate@1`.",
+        "operationId": "get_registry_entry",
+        "parameters": [
+          {
+            "description": "Identifier followed by `@{version}`.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Identifier followed by `@{version}`.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "`metrics`, `harnesses`, `relation_types` or `ext_schemas`.",
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "description": "`metrics`, `harnesses`, `relation_types` or `ext_schemas`.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "Namespace that owns the entry.",
+            "in": "path",
+            "name": "ns",
+            "required": true,
+            "schema": {
+              "description": "Namespace that owns the entry.",
+              "type": "string"
+            },
+            "style": "simple"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntryDto"
+                }
+              }
+            },
+            "description": "One registry entry."
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "One registry entry"
+      },
+      "put": {
+        "description": "Needs `write` on `ns`; `core/` is read-only. Entries are immutable, so a second write of the same address is `409` and a correction is a new version. An `ext_schemas` entry answers `202`: its expression indexes are built in the background, and until they are valid its paths accept `eq` and `exists` only.",
+        "operationId": "put_registry_entry",
+        "parameters": [
+          {
+            "description": "Identifier followed by `@{version}`.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Identifier followed by `@{version}`.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "`metrics`, `harnesses`, `relation_types` or `ext_schemas`.",
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "description": "`metrics`, `harnesses`, `relation_types` or `ext_schemas`.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "Namespace that owns the entry.",
+            "in": "path",
+            "name": "ns",
+            "required": true,
+            "schema": {
+              "description": "Namespace that owns the entry.",
+              "type": "string"
+            },
+            "style": "simple"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": true
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "400": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Failed to parse the request body as JSON"
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "415": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Expected request with `Content-Type: application/json`"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Register a definition"
       }
     },
     "/api/v1/tokens": {

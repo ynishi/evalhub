@@ -1,0 +1,5 @@
+{"where": {"and": [
+  {"path": "generation.temperature", "op": "eq", "value": "hot"},
+  {"path": "model.id", "op": "gte", "value": "a"},
+  {"path": "title", "op": "in", "value": "not-an-array"}
+]}}
