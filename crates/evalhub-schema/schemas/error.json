@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ErrorEnvelope",
+  "description": "The body of every `422` and `409` response.",
+  "type": "object",
+  "properties": {
+    "errors": {
+      "description": "Every rejection found, in document order.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ErrorEntry"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "errors"
+  ],
+  "$defs": {
+    "ErrorCode": {
+      "description": "The closed set of error codes.",
+      "oneOf": [
+        {
+          "description": "JSON Schema violation: unknown key, wrong type, missing required key.",
+          "type": "string",
+          "const": "schema"
+        },
+        {
+          "description": "An integer outside ±2^53.",
+          "type": "string",
+          "const": "number_too_large"
+        },
+        {
+          "description": "`results` is non-empty but `counts` is absent.",
+          "type": "string",
+          "const": "counts_missing"
+        },
+        {
+          "description": "`counts.attempted < completed + failed + skipped + errored`.",
+          "type": "string",
+          "const": "counts_inconsistent"
+        },
+        {
+          "description": "A `samples_ref`, `calls` or `artifacts[]` entry names no `attachments[].path`.",
+          "type": "string",
+          "const": "attachment_ref_unknown"
+        },
+        {
+          "description": "An `attachments[].path` is duplicated, absolute, or contains `..`.",
+          "type": "string",
+          "const": "attachment_path_invalid"
+        },
+        {
+          "description": "A `results[].metric` is not of the form `{ns}/{name}`.",
+          "type": "string",
+          "const": "metric_id_invalid"
+        },
+        {
+          "description": "Query: operator applied to a path of another type.",
+          "type": "string",
+          "const": "type_mismatch"
+        },
+        {
+          "description": "Query: operator needs an index the path does not have.",
+          "type": "string",
+          "const": "not_indexed"
+        },
+        {
+          "description": "Query: path not in the schema.",
+          "type": "string",
+          "const": "unknown_path"
+        },
+        {
+          "description": "An `attachments[].sha256` has not been uploaded and confirmed.",
+          "type": "string",
+          "const": "attachment_missing"
+        },
+        {
+          "description": "The requested `@{label}` already names another version.",
+          "type": "string",
+          "const": "label_in_use"
+        }
+      ]
+    },
+    "ErrorEntry": {
+      "description": "One rejection.",
+      "type": "object",
+      "properties": {
+        "code": {
+          "description": "The code.",
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "hint": {
+          "description": "Prose for a human. Not part of the contract.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "Location in the submitted document, JSON-pointer-like (`results[0].metric`).",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "code"
+      ]
+    }
+  }
+}

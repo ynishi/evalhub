@@ -1,0 +1,116 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
+//! The committed `schemas/*.json` are generated from the Rust types. This
+//! test regenerates them and fails if the committed file differs.
+//!
+//! To update after an intentional type change:
+//!
+//! ```text
+//! EVALHUB_UPDATE_SCHEMAS=1 cargo test -p evalhub-schema --test schemas
+//! ```
+//!
+//! and commit the result together with the type change.
+
+use std::path::PathBuf;
+
+fn schemas_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("schemas")
+}
+
+fn render(schema: &schemars::Schema) -> String {
+    let mut s = serde_json::to_string_pretty(schema).unwrap();
+    s.push('\n');
+    s
+}
+
+#[test]
+fn committed_schemas_are_current() {
+    let update = std::env::var_os("EVALHUB_UPDATE_SCHEMAS").is_some();
+    let dir = schemas_dir();
+    let mut stale = Vec::new();
+
+    for (name, schema) in evalhub_schema::all_schemas() {
+        let path = dir.join(format!("{name}.json"));
+        let generated = render(&schema);
+        let committed = std::fs::read_to_string(&path).unwrap_or_default();
+        if generated == committed {
+            continue;
+        }
+        if update {
+            std::fs::write(&path, &generated).unwrap();
+            eprintln!("updated {}", path.display());
+        } else {
+            let new = dir.join(format!("{name}.json.new"));
+            std::fs::write(&new, &generated).unwrap();
+            stale.push(format!(
+                "{} is stale; the current schema was written to {}. Review it, then \
+                 rerun with EVALHUB_UPDATE_SCHEMAS=1 to replace the committed file.",
+                path.display(),
+                new.display()
+            ));
+        }
+    }
+
+    assert!(stale.is_empty(), "{}", stale.join("\n"));
+}
+
+#[test]
+fn schema_names_match_all_schemas() {
+    let names: Vec<&str> = evalhub_schema::all_schemas()
+        .into_iter()
+        .map(|(n, _)| n)
+        .collect();
+    assert_eq!(names, evalhub_schema::SCHEMA_NAMES);
+}
+
+#[test]
+fn schemas_are_draft_2020_12_and_closed() {
+    for (name, schema) in evalhub_schema::all_schemas() {
+        let v = schema.as_value();
+        assert_eq!(
+            v["$schema"], "https://json-schema.org/draft/2020-12/schema",
+            "{name}: $schema"
+        );
+        assert!(v.get("$id").is_none(), "{name}: $id is the server's to set");
+        assert_eq!(
+            v["additionalProperties"], false,
+            "{name}: the root object must be closed"
+        );
+    }
+}
+
+#[test]
+fn fingerprint_exclusions_are_in_the_schema() {
+    let card = evalhub_schema::schema_for_card();
+    let v = card.as_value();
+    let defs = &v["$defs"];
+    assert_eq!(
+        defs["Model"]["properties"]["context_window"]["x-fingerprint"],
+        false
+    );
+    assert_eq!(defs["Env"]["properties"]["os"]["x-fingerprint"], false);
+    assert_eq!(
+        defs["Env"]["properties"]["hardware"]["x-fingerprint"],
+        false
+    );
+    // A core key carries no marker at all.
+    assert!(
+        defs["Model"]["properties"]["id"]
+            .get("x-fingerprint")
+            .is_none()
+    );
+}
+
+#[test]
+fn schema_identifier_constants_match_the_schema_const() {
+    let card = evalhub_schema::schema_for_card();
+    assert_eq!(
+        card.as_value()["properties"]["schema"]["const"],
+        evalhub_schema::CARD_SCHEMA
+    );
+    let eval = evalhub_schema::schema_for_eval();
+    assert_eq!(
+        eval.as_value()["properties"]["schema"]["const"],
+        evalhub_schema::EVAL_SCHEMA
+    );
+}

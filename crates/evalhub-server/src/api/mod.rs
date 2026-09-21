@@ -28,7 +28,9 @@
 use std::sync::Arc;
 
 use aide::axum::ApiRouter;
-use aide::axum::routing::get_with;
+use aide::axum::routing::{get_with, post_with};
+use aide::transform::TransformOperation;
+use axum::Json;
 use axum::Router;
 use axum::routing::get;
 use tower_http::trace::TraceLayer;
@@ -51,8 +53,10 @@ pub mod relations;
 
 /// Build the application router and the OpenAPI document it describes.
 ///
-/// `db` is `None` when no database is configured; endpoints that need one
-/// are not mounted in that case (there are none yet).
+/// Every route is mounted whether or not `db` is present, so the document
+/// is the same in every configuration; `serve` refuses to start without a
+/// database, and a router built with `None` (the boot tests) answers `500`
+/// on any route that needs one.
 pub fn router(config: Arc<Config>, db: Option<PgPool>) -> Router {
     let mut openapi = crate::openapi::skeleton();
 
@@ -72,6 +76,24 @@ pub fn router(config: Arc<Config>, db: Option<PgPool>) -> Router {
                     .summary("Who the hub thinks the caller is")
                     .description("Identity and scope of the presented token, or anonymous.")
             }),
+        )
+        .api_route(
+            "/cards/{ns}/{name}",
+            post_with(records::post_card, |op| {
+                post_record_docs(op.id("post_card").summary("Append a Card version"))
+            })
+            .get_with(records::get_card, |op| {
+                get_record_docs(op.id("get_card").summary("Read a Card version"))
+            }),
+        )
+        .api_route(
+            "/evals/{ns}/{name}",
+            post_with(records::post_eval, |op| {
+                post_record_docs(op.id("post_eval").summary("Append an Eval version"))
+            })
+            .get_with(records::get_eval, |op| {
+                get_record_docs(op.id("get_eval").summary("Read an Eval version"))
+            }),
         );
 
     let app = ApiRouter::new()
@@ -85,7 +107,33 @@ pub fn router(config: Arc<Config>, db: Option<PgPool>) -> Router {
     };
 
     app.route("/openapi.json", get(meta::openapi))
+        .route("/schemas/{name}", get(meta::schema))
         .fallback(crate::embed::fallback)
         .layer(TraceLayer::new_for_http())
         .with_state(state)
+}
+
+fn post_record_docs(op: TransformOperation<'_>) -> TransformOperation<'_> {
+    op.description(
+        "Validates the body, canonicalises it and stores it as the next version \
+         of `{ns}/{name}`, creating the name if needed. Requires a token with \
+         `write` on `ns`. If the canonical body equals the latest version's, \
+         that version is returned with `200` and nothing is written.",
+    )
+    .response_with::<201, Json<records::VersionEnvelope>, _>(|r| {
+        r.description("A new version was stored.")
+    })
+    .response_with::<200, Json<records::VersionEnvelope>, _>(|r| {
+        r.description("The body equals the latest version; that version is returned.")
+    })
+}
+
+fn get_record_docs(op: TransformOperation<'_>) -> TransformOperation<'_> {
+    op.description(
+        "The latest live version of `{ns}/{name}`, or the version `@{seq}`. \
+         Private records are `404` to a caller whose token does not cover `ns`.",
+    )
+    .response_with::<200, Json<records::VersionEnvelope>, _>(|r| {
+        r.description("The version and the hub's facts about it.")
+    })
 }

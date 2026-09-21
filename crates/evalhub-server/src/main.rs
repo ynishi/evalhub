@@ -35,6 +35,26 @@ enum Command {
         #[command(subcommand)]
         command: ConfigCommand,
     },
+    /// Manage users (bootstrap; there is no signup endpoint).
+    User {
+        #[command(subcommand)]
+        command: UserCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum UserCommand {
+    /// Create a user, its personal namespace, and a first token. The
+    /// token secret is printed once and never again.
+    Create {
+        #[command(flatten)]
+        db: DbArgs,
+        /// Login; also the user's personal namespace.
+        login: String,
+        /// Scope of the first token.
+        #[arg(long, default_value = "write", value_parser = ["read", "write", "admin"])]
+        scope: String,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -100,7 +120,47 @@ async fn main() -> anyhow::Result<()> {
             show(&loaded, origin);
             Ok(())
         }
+        Command::User {
+            command: UserCommand::Create { db, login, scope },
+        } => {
+            let loaded = load(
+                cli.config.as_deref(),
+                Overrides {
+                    database_url: db.database_url,
+                    ..Overrides::default()
+                },
+            )?;
+            init_tracing(loaded.config.log.format);
+            user_create(loaded, &login, &scope).await
+        }
     }
+}
+
+async fn user_create(loaded: Loaded, login: &str, scope: &str) -> anyhow::Result<()> {
+    let pool = require_db(&loaded).await?;
+    let user_id = evalhub_store::auth::create_user(&pool, login)
+        .await
+        .context("creating user")?;
+    let (secret, hash) = evalhub_server::auth::new_secret();
+    let scope = evalhub_store::auth::Scope::parse(scope);
+    let token_id =
+        evalhub_store::auth::create_token(&pool, user_id, scope, &[login.to_string()], &hash)
+            .await
+            .context("creating token")?;
+    info!(%login, %user_id, %token_id, "user created");
+    println!("login:    {login}");
+    println!("scope:    {}", scope.as_str());
+    println!("token:    {secret}");
+    println!("(the token is shown once; the hub keeps only its hash)");
+    Ok(())
+}
+
+async fn require_db(loaded: &Loaded) -> anyhow::Result<evalhub_store::PgPool> {
+    connect(loaded).await?.ok_or_else(|| {
+        anyhow::anyhow!(
+            "no database configured (set database.url, EVALHUB_DATABASE__URL, or --database-url)"
+        )
+    })
 }
 
 fn load(file: Option<&std::path::Path>, overrides: Overrides) -> anyhow::Result<Loaded> {
@@ -131,24 +191,19 @@ async fn connect(loaded: &Loaded) -> anyhow::Result<Option<evalhub_store::PgPool
 }
 
 async fn serve(loaded: Loaded) -> anyhow::Result<()> {
-    let db = connect(&loaded).await?;
-    match &db {
-        Some(pool) => {
-            let pending = evalhub_store::pool::pending_migrations(pool)
-                .await
-                .context("checking migrations")?;
-            if !pending.is_empty() {
-                anyhow::bail!(
-                    "database has pending migrations {pending:?}; run `evalhub migrate` first"
-                );
-            }
-            info!("database connected, schema current");
-        }
-        None => warn!("no database configured; only meta endpoints are served"),
+    // The record API needs a database; a server without one has nothing
+    // to serve but its own health, so it refuses to start.
+    let pool = require_db(&loaded).await?;
+    let pending = evalhub_store::pool::pending_migrations(&pool)
+        .await
+        .context("checking migrations")?;
+    if !pending.is_empty() {
+        anyhow::bail!("database has pending migrations {pending:?}; run `evalhub migrate` first");
     }
+    info!("database connected, schema current");
 
     let bind = loaded.config.bind.clone();
-    let app = evalhub_server::api::router(Arc::new(loaded.config), db);
+    let app = evalhub_server::api::router(Arc::new(loaded.config), Some(pool));
     let listener = TcpListener::bind(&bind)
         .await
         .with_context(|| format!("binding {bind}"))?;

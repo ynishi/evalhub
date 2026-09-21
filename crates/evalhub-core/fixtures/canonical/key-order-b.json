@@ -1,0 +1,6 @@
+{"small":1e-4,
+ "e":1000000000000000000000,
+ "n":1,
+ "Beta":"unicode order: capital before lowercase",
+ "alpha":[3,2,1],
+ "zeta":{"a":1,"b":2}}

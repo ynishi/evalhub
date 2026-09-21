@@ -80,6 +80,7 @@
 //! # Modules
 //!
 //! - [`pool`] — connection pool and migration runner.
+//! - [`auth`] — users, namespaces and tokens: the identity rows.
 //! - [`records`] — names, versions, labels, tombstones, idempotent create.
 //! - [`objects`] — attachment lifecycle: presign, confirm, reference count, GC.
 //! - [`relations`] — edges, resolution, traversal, the comparison view.
@@ -92,6 +93,7 @@
 //! are the only way the schema changes.
 
 pub mod audit;
+pub mod auth;
 pub mod error;
 pub mod index;
 pub mod objects;

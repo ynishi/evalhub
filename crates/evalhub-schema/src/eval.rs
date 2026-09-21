@@ -83,3 +83,122 @@
 //! that an Eval exists, its `version_id`, and the `content_hash` commitment —
 //! enough to know the Card is anchored to something specific — and nothing
 //! else. No title, no runs, no attachment URLs.
+
+use chrono::{DateTime, Utc};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+use crate::common::{Attachment, Ext, Producer, Redaction, Relation};
+use crate::facet::{Env, Generation, Harness, Model, Task, Trial};
+
+/// An Eval: the material a Card was measured from.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Eval {
+    /// Schema identifier; must be `evalhub.eval/1.0`.
+    #[schemars(extend("const" = "evalhub.eval/1.0"))]
+    pub schema: String,
+    /// Human-readable title.
+    pub title: String,
+    /// The software that wrote this record.
+    pub producer: Producer,
+    /// What the material is.
+    pub eval_kind: EvalKind,
+    /// How the material came to exist.
+    pub origin: Origin,
+    /// The model facet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<Model>,
+    /// The task facet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<Task>,
+    /// The harness facet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harness: Option<Harness>,
+    /// The generation facet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<Generation>,
+    /// The trial facet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trial: Option<Trial>,
+    /// The environment facet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<Env>,
+    /// The runs. Required when `eval_kind` is `run_set`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub runs: Vec<Run>,
+    /// Edges to other Evals (`core/derived_from`, `core/subset_of`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub relations: Vec<Relation>,
+    /// Files this record refers to.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<Attachment>,
+    /// What the producer removed before publishing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redaction: Option<Redaction>,
+    /// Producer-private extensions keyed by namespace.
+    #[serde(default)]
+    pub ext: Ext,
+}
+
+/// What an Eval's material is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EvalKind {
+    /// A set of runs, each with its model calls.
+    RunSet,
+    /// A set of prompts.
+    PromptSet,
+    /// A set of tasks.
+    TaskSet,
+    /// A set of traces.
+    TraceSet,
+}
+
+/// How an Eval's material came to exist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Origin {
+    /// Captured while the evaluation ran.
+    Live,
+    /// Rebuilt afterwards from logs.
+    Reconstructed,
+    /// Converted from another format.
+    Imported,
+}
+
+/// One run in a `run_set`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Run {
+    /// Run identifier, unique within the Eval.
+    pub run_id: String,
+    /// When the run started.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<DateTime<Utc>>,
+    /// When the run ended.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ended_at: Option<DateTime<Utc>>,
+    /// How the run ended.
+    pub outcome: Outcome,
+    /// `attachments[].path` of the model calls made during the run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub calls: Option<String>,
+    /// `attachments[].path` entries of artifacts the run produced.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub artifacts: Vec<String>,
+}
+
+/// How a run ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Outcome {
+    /// The run completed and passed.
+    Pass,
+    /// The run completed and failed.
+    Fail,
+    /// The run errored before completion.
+    Error,
+    /// The run was skipped.
+    Skipped,
+}

@@ -1,0 +1,8 @@
+{
+  "zeta": {"b": 2, "a": 1},
+  "alpha": [3, 2, 1],
+  "Beta": "unicode order: capital before lowercase",
+  "n": 1.0,
+  "e": 1e21,
+  "small": 0.0001
+}

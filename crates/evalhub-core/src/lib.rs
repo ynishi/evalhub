@@ -69,3 +69,6 @@ pub mod fingerprint;
 pub mod id;
 pub mod registry;
 pub mod validate;
+
+pub use canonical::{ContentHash, canonicalize, content_hash};
+pub use id::{RecordId, VersionId};

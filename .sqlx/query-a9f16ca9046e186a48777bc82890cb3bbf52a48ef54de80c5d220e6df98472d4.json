@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO namespaces (ns, kind) VALUES ($1, $2) ON CONFLICT (ns) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a9f16ca9046e186a48777bc82890cb3bbf52a48ef54de80c5d220e6df98472d4"
+}

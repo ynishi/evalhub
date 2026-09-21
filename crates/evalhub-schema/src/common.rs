@@ -50,3 +50,73 @@
 //! extensions cannot collide, and so that a namespace can later register an
 //! `ext_schema` to make its keys typed and indexable. Until it does, `ext`
 //! values can be searched with `eq` and `exists` only.
+
+use std::collections::BTreeMap;
+
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+/// Producer-private extensions, keyed by namespace (`{ns}/{name}`). Each value
+/// is an arbitrary JSON object owned by that namespace.
+pub type Ext = BTreeMap<String, serde_json::Value>;
+
+/// Free-form attributes carried by a relation, keyed by attribute name.
+pub type Attrs = serde_json::Map<String, serde_json::Value>;
+
+/// True when an extension map is empty; used to omit it on output.
+pub(crate) fn ext_is_empty(ext: &Ext) -> bool {
+    ext.is_empty()
+}
+
+/// The software that wrote the record. Informational; not a facet.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Producer {
+    /// Name of the producing software (a harness, a converter, a script).
+    pub name: String,
+    /// Version of the producing software.
+    pub version: String,
+}
+
+/// A file in object storage that the record refers to by `path`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Attachment {
+    /// Relative, `..`-free name, unique within the record; other fields point at it.
+    pub path: String,
+    /// Lower-case hex sha256 of the file's bytes; the object's address in storage.
+    pub sha256: String,
+    /// Size of the file in bytes.
+    pub size: u64,
+    /// Media type of the file, for display and download only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_type: Option<String>,
+}
+
+/// An edge from this version to another record version or an external target.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Relation {
+    /// Relation type as a registry id, `{ns}/{name}` (for example `core/uses_eval`).
+    #[serde(rename = "type")]
+    pub relation_type: String,
+    /// Target: `{ns}/{name}@{seq}` on the hub, or `external:<url>` / `hf:<org>/<repo>@<sha>` outside it.
+    pub to: String,
+    /// Attributes specific to the relation type (for `uses_eval`, which runs were used).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attrs: Option<Attrs>,
+}
+
+/// The producer's statement about what it removed before publishing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Redaction {
+    /// Whether any redaction was applied.
+    pub applied: bool,
+    /// How it was applied (for example `regex+llm`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub method: Option<String>,
+    /// Which fields were redacted, as `attachment path:field` or a record path.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<String>,
+}

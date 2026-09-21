@@ -173,19 +173,24 @@
 //!
 //! # Build order
 //!
-//! | Step | Crate / area                                                                                     | Depends on |
-//! | ---- | ------------------------------------------------------------------------------------------------ | ---------- |
-//! | 1    | `evalhub-schema`: record / facet / query / error types → generated schemas, fixtures, OpenAPI skeleton | —     |
-//! | 2    | `evalhub-core`: canonical form, fingerprints, validation, badges; all fixtures pass               | 1          |
-//! | 3    | `evalhub-query`: grammar, type check, IR; query fixtures pass                                     | 1          |
-//! | 4    | `evalhub-store`: migrations, record / version / attachment / relation repositories, IR → SQL      | 2, 3       |
-//! | 5    | `evalhub-server`: auth, record API, presigned attachment flow, query, relations, comparison view, OpenAPI | 4   |
-//! | 6    | registry (typed `ext` indexes), export, GC job, audit API                                        | 5          |
-//! | 7    | web UI: generated TS client → list / search, Card page, Eval page; then namespace / settings / registry | 5    |
+//! The implementation is cut vertically, not crate by crate: each
+//! milestone leaves a binary that does more than the one before, and the
+//! integration risks (the OpenAPI generator, the SQL offline metadata, the
+//! container fixtures, token extraction) surfaced in the first one rather
+//! than after three crates were written in isolation.
 //!
-//! Step 1's fixtures are the contract with harness authors. Steps 2 and 3
-//! close without a database. This commit is the skeleton plus a bootable
-//! server; the record API (step 5) is next.
+//! | Milestone | What works when it is done                                                                  | Status |
+//! | --------- | ------------------------------------------------------------------------------------------- | ------ |
+//! | M0        | Manifests: the real MSRV, the dsl-kit crates the grammar needs, license allowances           | done   |
+//! | M1        | Walking skeleton: record types and served schemas; canonical form and ids; `records` repository with the container fixture and `.sqlx/`; token auth with a CLI bootstrap; `POST` / `GET` of a Card and an Eval, idempotent on `content_hash`, private by default | done |
+//! | M2        | Record API complete: validation (`422 errors[]`), fingerprints and badges, attachments and `409 attachment_missing`, versions / labels / settings / tombstones, relations and the comparison view, tokens / orgs, list with signed cursors | next |
+//! | M3        | Query DSL and registry: grammar, type check, IR → SQL, `POST …/query`; `core/` seed, `ext_schemas` index job, badge recompute, GC; export and audit | |
+//! | M4        | Web UI: SvelteKit SPA generated from `openapi.json`, embedded in the binary                 | |
+//!
+//! Within a milestone the order follows the ingest path: schema types,
+//! then the pure rules in `evalhub_core`, then the store, then the
+//! handlers. The schema crate's fixtures are the contract with harness
+//! authors; `evalhub_core` and `evalhub_query` close without a database.
 //!
 //! # Open questions
 //!
