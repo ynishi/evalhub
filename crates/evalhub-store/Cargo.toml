@@ -1,0 +1,34 @@
+[package]
+name = "evalhub-store"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "evalhub persistence: Postgres repositories, object storage, query IR to SQL."
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+evalhub-schema.workspace = true
+evalhub-core.workspace = true
+evalhub-query.workspace = true
+sqlx.workspace = true
+object_store.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+ulid.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+testcontainers-modules.workspace = true
+insta.workspace = true

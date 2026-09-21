@@ -1,0 +1,104 @@
+---
+source: crates/evalhub-server/tests/boot.rs
+expression: body
+---
+{
+  "components": {
+    "schemas": {
+      "Health": {
+        "description": "`GET /api/v1/healthz`",
+        "properties": {
+          "database": {
+            "description": "`connected` when a database pool is open, `not_configured` otherwise.",
+            "type": "string"
+          },
+          "status": {
+            "description": "Always `ok` when the process answers.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "database"
+        ],
+        "type": "object"
+      },
+      "Whoami": {
+        "description": "`GET /api/v1/whoami`",
+        "properties": {
+          "namespaces": {
+            "description": "Namespaces the presented token covers. Empty when anonymous.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "scope": {
+            "description": "Scope of the presented token, or `null` when anonymous.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "user": {
+            "description": "Login of the authenticated user, or `null` for an anonymous caller.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "namespaces"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "A hosting service for named, versioned LLM evaluation results (Cards) and their materials (Evals). The hub validates, indexes and compares; it does not run evaluations.",
+    "title": "evalhub",
+    "version": "1.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/healthz": {
+      "get": {
+        "description": "Answers as long as the process is up.",
+        "operationId": "healthz",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            },
+            "description": "`GET /api/v1/healthz`"
+          }
+        },
+        "summary": "Liveness"
+      }
+    },
+    "/api/v1/whoami": {
+      "get": {
+        "description": "Identity and scope of the presented token, or anonymous.",
+        "operationId": "whoami",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Whoami"
+                }
+              }
+            },
+            "description": "`GET /api/v1/whoami`"
+          }
+        },
+        "summary": "Who the hub thinks the caller is"
+      }
+    }
+  }
+}

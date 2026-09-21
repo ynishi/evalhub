@@ -1,0 +1,32 @@
+[package]
+name = "evalhub-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "evalhub domain rules: canonical form, fingerprints, validation, badges. No I/O."
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+evalhub-schema.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_json_canonicalizer.workspace = true
+jsonschema.workspace = true
+sha2.workspace = true
+hex.workspace = true
+ulid.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+proptest.workspace = true
+rstest.workspace = true

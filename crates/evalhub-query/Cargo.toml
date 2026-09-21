@@ -1,0 +1,28 @@
+[package]
+name = "evalhub-query"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "evalhub query DSL: grammar, schema-derived type check, backend-independent IR."
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+evalhub-schema.workspace = true
+evalhub-core.workspace = true
+dsl-kit.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+rstest.workspace = true

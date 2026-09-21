@@ -1,0 +1,93 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "AGPL-3.0-only"
+authors = ["Yutaka Nishimura"]
+repository = "https://github.com/ynishi/evalhub"
+homepage = "https://github.com/ynishi/evalhub"
+description = "A hosting service for named, versioned LLM evaluation results and their materials."
+keywords = ["llm", "evaluation", "benchmark", "hub"]
+categories = ["web-programming::http-server", "science"]
+
+[workspace.dependencies]
+# internal
+evalhub-schema = { path = "crates/evalhub-schema", version = "0.1.0" }
+evalhub-core = { path = "crates/evalhub-core", version = "0.1.0" }
+evalhub-query = { path = "crates/evalhub-query", version = "0.1.0" }
+evalhub-store = { path = "crates/evalhub-store", version = "0.1.0" }
+
+# serde
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# error / log
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# ids / time / hashing
+ulid = { version = "3", features = ["serde", "uuid"] }
+uuid = { version = "1", features = ["serde", "v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.11"
+hex = "0.4"
+hmac = "0.13"
+subtle = "2"
+base64 = "0.23"
+rand = "0.10"
+
+# schema / validation / canonical form
+schemars = { version = "1", features = ["chrono04"] }
+jsonschema = { version = "0.56", default-features = false }
+serde_json_canonicalizer = "0.3"
+
+# query DSL
+dsl-kit = "0.11"
+
+# storage
+sqlx = { version = "0.9", default-features = false, features = [
+    "postgres",
+    "runtime-tokio",
+    "tls-rustls",
+    "migrate",
+    "json",
+    "uuid",
+    "chrono",
+    "macros",
+] }
+object_store = { version = "0.14", features = ["aws"] }
+
+# server
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+axum = "0.8"
+axum-extra = { version = "0.12", features = ["cookie-private"] }
+# aide 0.15 (stable) depends on schemars 0.9; the 0.16 line is the one on
+# schemars 1 and axum 0.8. Pinned to the alpha until 0.16.0 ships, then relax.
+aide = { version = "=0.16.0-alpha.4", features = ["axum", "axum-json"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.7", features = ["trace", "compression-gzip", "set-header", "limit"] }
+rust-embed = "8"
+clap = { version = "4", features = ["derive", "env"] }
+figment = { version = "0.10", features = ["toml", "env"] }
+secrecy = { version = "0.10", features = ["serde"] }
+
+# test
+insta = { version = "1", features = ["json"] }
+rstest = "0.27"
+proptest = "1"
+tempfile = "3"
+testcontainers-modules = { version = "0.15", features = ["postgres", "minio"] }
+
+[workspace.lints.rust]
+missing_docs = "warn"
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
