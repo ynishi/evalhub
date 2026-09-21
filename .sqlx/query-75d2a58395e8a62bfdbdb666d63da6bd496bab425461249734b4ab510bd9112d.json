@@ -1,0 +1,46 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO versions (version_id, record_id, seq, label, content_hash, body, changed)\n         VALUES ($1, $2, $3, $4, $5, $6, $7)\n         RETURNING created_at, badges",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "versions",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "badges",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "versions",
+            "name": "badges"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int4",
+        "Text",
+        "Bytea",
+        "Jsonb",
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "75d2a58395e8a62bfdbdb666d63da6bd496bab425461249734b4ab510bd9112d"
+}

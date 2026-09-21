@@ -11,8 +11,9 @@ does not rewrite what it receives, and never calls anything "verified".
 
 ## Status
 
-Pre-alpha. The workspace layout and the design are in place; the
-implementation is not. Read the design in the crate docs:
+Pre-alpha. The record API accepts and returns Cards and Evals (create,
+append, read); validation beyond the record's shape, attachments, relations,
+query and the web UI are not there yet. Read the design in the crate docs:
 
 ```bash
 cargo doc --no-deps --open
@@ -34,14 +35,15 @@ links down to `evalhub_core` and `evalhub_store`.
 
 ## Running
 
-One binary. Today it serves the meta endpoints (`/api/v1/healthz`,
-`/api/v1/whoami`, `/openapi.json`) and a placeholder page; the record API is
-not there yet.
+One binary and a Postgres. Bring the schema current, create the first user
+(there is no signup endpoint; the token is printed once), then serve:
 
 ```bash
+export EVALHUB_DATABASE__URL=postgres://user:pass@localhost/evalhub
+cargo run -p evalhub-server -- migrate
+cargo run -p evalhub-server -- user create alice        # prints alice's token
 cargo run -p evalhub-server -- serve --bind 127.0.0.1:8080
 cargo run -p evalhub-server -- config show --origin
-cargo run -p evalhub-server -- migrate --database-url postgres://...
 ```
 
 Configuration is layered: defaults, then a TOML file (`--config` or
@@ -50,9 +52,31 @@ Configuration is layered: defaults, then a TOML file (`--config` or
 `EVALHUB_DATABASE__URL`), then flags. `config show --origin` prints every
 key with the layer that set it; secrets are redacted.
 
-`serve` without a database logs a warning and serves only the meta
-endpoints. With one, it refuses to start until `evalhub migrate` has brought
-the schema current.
+`serve` refuses to start without a database, and with one it refuses to
+start until `evalhub migrate` has brought the schema current.
+
+## API
+
+Everything is under `/api/v1`; the contract is `GET /openapi.json` (OpenAPI
+3.1) and the record schemas are `GET /schemas/{card|eval|error|query}`.
+Writes need `Authorization: Bearer <token>` with `write` on the namespace;
+reads of public records need nothing, and private records are `404` to
+anyone the token does not cover.
+
+| Method | Path                                  | Does                                                                                   |
+| ------ | ------------------------------------- | -------------------------------------------------------------------------------------- |
+| `POST` | `/cards/{ns}/{name}?label=`           | Append a Card version. `201` with `{ id, version_id, seq, label, content_hash, changed[], badges[] }`; `200` and the existing version when the canonical body equals the latest; `422 { errors[] }` when the shape is wrong; `409 label_in_use`. |
+| `GET`  | `/cards/{ns}/{name}[@{seq}]`          | The latest live version, or one by sequence number, with the canonical `record`.       |
+| `POST` | `/evals/{ns}/{name}?label=`           | Same for an Eval.                                                                      |
+| `GET`  | `/evals/{ns}/{name}[@{seq}]`          | Same for an Eval.                                                                      |
+| `GET`  | `/whoami`                             | The token's user, scope and namespaces, or all empty.                                  |
+| `GET`  | `/healthz`                            | Liveness.                                                                              |
+
+A record is the client's claim, kept verbatim in canonical form (RFC 8785);
+the hub adds the identifiers, the sequence number and the `content_hash`.
+Attachments, relations, labels as addresses, tombstones, listing and the
+query language are the next milestones (see the `evalhub_server` crate doc,
+"Build order").
 
 ## License
 

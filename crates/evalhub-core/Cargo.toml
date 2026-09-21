@@ -23,6 +23,7 @@ jsonschema.workspace = true
 sha2.workspace = true
 hex.workspace = true
 ulid.workspace = true
+uuid.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 

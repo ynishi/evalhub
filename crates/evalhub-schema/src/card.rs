@@ -91,3 +91,185 @@
 //! `changed[]`, `badges[]` and the per-facet fingerprints are not part of
 //! this type. They are returned alongside it in API responses and are
 //! documented in `evalhub_server::api::records`.
+
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+use crate::common::{Attachment, Ext, Producer, Redaction, Relation};
+use crate::facet::{Env, Generation, Grading, Harness, Model, Task, Trial};
+
+/// A Card: what was measured, how, and what the score was.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Card {
+    /// Schema identifier; must be `evalhub.card/1.0`.
+    #[schemars(extend("const" = "evalhub.card/1.0"))]
+    pub schema: String,
+    /// Human-readable title.
+    pub title: String,
+    /// The software that wrote this record.
+    pub producer: Producer,
+    /// The model facet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<Model>,
+    /// The task facet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<Task>,
+    /// The harness facet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harness: Option<Harness>,
+    /// The generation facet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<Generation>,
+    /// The trial facet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trial: Option<Trial>,
+    /// The grading facet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grading: Option<Grading>,
+    /// The environment facet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<Env>,
+    /// The scores.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub results: Vec<ResultEntry>,
+    /// Item counts the scores were computed over. Required when `results` is non-empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub counts: Option<Counts>,
+    /// Edges to other records.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub relations: Vec<Relation>,
+    /// Files this record refers to.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<Attachment>,
+    /// What the producer removed before publishing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redaction: Option<Redaction>,
+    /// Where the numbers came from and who ran the evaluation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<Provenance>,
+    /// Producer-private extensions keyed by namespace.
+    #[serde(default)]
+    pub ext: Ext,
+}
+
+/// One score.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ResultEntry {
+    /// Metric as a registry id, `{ns}/{name}` (for example `core/pass_rate`).
+    pub metric: String,
+    /// The score.
+    pub value: f64,
+    /// Number of samples the score was computed over.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub n: Option<u64>,
+    /// How `value` was derived from the samples.
+    pub aggregation: Aggregation,
+    /// Uncertainty the producer computed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uncertainty: Option<Uncertainty>,
+    /// The partition this score applies to (for example which grader).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<serde_json::Map<String, serde_json::Value>>,
+    /// `attachments[].path` of the per-sample rows this score summarises.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub samples_ref: Option<String>,
+}
+
+/// How a score was derived from its samples.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Aggregation {
+    /// Arithmetic mean over samples.
+    Mean,
+    /// pass@k over attempts.
+    PassAtK,
+    /// Median over samples.
+    Median,
+    /// Sum over samples.
+    Sum,
+    /// A producer-defined aggregation; describe it in `ext`.
+    Custom,
+}
+
+/// Uncertainty of a score.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Uncertainty {
+    /// Standard error of the score.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stderr: Option<f64>,
+    /// Confidence interval of the score.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ci: Option<ConfidenceInterval>,
+}
+
+/// A confidence interval.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConfidenceInterval {
+    /// Confidence level, for example `0.95`.
+    pub level: f64,
+    /// Lower bound.
+    pub low: f64,
+    /// Upper bound.
+    pub high: f64,
+}
+
+/// Item counts. `attempted >= completed + failed + skipped + errored`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Counts {
+    /// Items the evaluation set out to run.
+    pub attempted: u64,
+    /// Items that produced a gradable response.
+    #[serde(default)]
+    pub completed: u64,
+    /// Items that were graded as failing.
+    #[serde(default)]
+    pub failed: u64,
+    /// Items skipped by the harness.
+    #[serde(default)]
+    pub skipped: u64,
+    /// Items that errored before grading.
+    #[serde(default)]
+    pub errored: u64,
+}
+
+/// Where the numbers came from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Provenance {
+    /// What kind of source the numbers were taken from.
+    pub source_type: SourceType,
+    /// Who ran the evaluation relative to the model's maker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evaluator_relationship: Option<EvaluatorRelationship>,
+}
+
+/// The kind of source a Card's numbers were taken from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceType {
+    /// The producer ran the evaluation and recorded the result.
+    EvaluationRun,
+    /// Transcribed from a paper.
+    Paper,
+    /// Transcribed from a model card.
+    ModelCard,
+    /// Transcribed from a leaderboard.
+    Leaderboard,
+    /// Something else; describe it in `ext`.
+    Other,
+}
+
+/// Who ran the evaluation relative to the model's maker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EvaluatorRelationship {
+    /// The model's maker evaluated its own model.
+    FirstParty,
+    /// Someone else evaluated it.
+    ThirdParty,
+}

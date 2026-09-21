@@ -34,3 +34,67 @@
 //!
 //! Codes are added, never renamed or reused. A client switching on `code`
 //! must treat an unknown code as a generic 422.
+
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+/// The closed set of error codes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorCode {
+    /// JSON Schema violation: unknown key, wrong type, missing required key.
+    Schema,
+    /// An integer outside ±2^53.
+    NumberTooLarge,
+    /// `results` is non-empty but `counts` is absent.
+    CountsMissing,
+    /// `counts.attempted < completed + failed + skipped + errored`.
+    CountsInconsistent,
+    /// A `samples_ref`, `calls` or `artifacts[]` entry names no `attachments[].path`.
+    AttachmentRefUnknown,
+    /// An `attachments[].path` is duplicated, absolute, or contains `..`.
+    AttachmentPathInvalid,
+    /// A `results[].metric` is not of the form `{ns}/{name}`.
+    MetricIdInvalid,
+    /// Query: operator applied to a path of another type.
+    TypeMismatch,
+    /// Query: operator needs an index the path does not have.
+    NotIndexed,
+    /// Query: path not in the schema.
+    UnknownPath,
+    /// An `attachments[].sha256` has not been uploaded and confirmed.
+    AttachmentMissing,
+    /// The requested `@{label}` already names another version.
+    LabelInUse,
+}
+
+impl ErrorCode {
+    /// The HTTP status this code is returned with.
+    pub const fn status(self) -> u16 {
+        match self {
+            ErrorCode::AttachmentMissing | ErrorCode::LabelInUse => 409,
+            _ => 422,
+        }
+    }
+}
+
+/// One rejection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ErrorEntry {
+    /// Location in the submitted document, JSON-pointer-like (`results[0].metric`).
+    pub path: String,
+    /// The code.
+    pub code: ErrorCode,
+    /// Prose for a human. Not part of the contract.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
+}
+
+/// The body of every `422` and `409` response.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ErrorEnvelope {
+    /// Every rejection found, in document order.
+    pub errors: Vec<ErrorEntry>,
+}

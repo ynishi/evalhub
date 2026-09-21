@@ -1,0 +1,955 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Eval",
+  "description": "An Eval: the material a Card was measured from.",
+  "type": "object",
+  "properties": {
+    "attachments": {
+      "description": "Files this record refers to.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Attachment"
+      }
+    },
+    "env": {
+      "description": "The environment facet.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Env"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "eval_kind": {
+      "description": "What the material is.",
+      "$ref": "#/$defs/EvalKind"
+    },
+    "ext": {
+      "description": "Producer-private extensions keyed by namespace.",
+      "type": "object",
+      "additionalProperties": true,
+      "default": {}
+    },
+    "generation": {
+      "description": "The generation facet.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Generation"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "harness": {
+      "description": "The harness facet.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Harness"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "model": {
+      "description": "The model facet.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Model"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "origin": {
+      "description": "How the material came to exist.",
+      "$ref": "#/$defs/Origin"
+    },
+    "producer": {
+      "description": "The software that wrote this record.",
+      "$ref": "#/$defs/Producer"
+    },
+    "redaction": {
+      "description": "What the producer removed before publishing.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Redaction"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "relations": {
+      "description": "Edges to other Evals (`core/derived_from`, `core/subset_of`).",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Relation"
+      }
+    },
+    "runs": {
+      "description": "The runs. Required when `eval_kind` is `run_set`.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Run"
+      }
+    },
+    "schema": {
+      "description": "Schema identifier; must be `evalhub.eval/1.0`.",
+      "type": "string",
+      "const": "evalhub.eval/1.0"
+    },
+    "task": {
+      "description": "The task facet.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Task"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "title": {
+      "description": "Human-readable title.",
+      "type": "string"
+    },
+    "trial": {
+      "description": "The trial facet.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Trial"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "title",
+    "producer",
+    "eval_kind",
+    "origin"
+  ],
+  "$defs": {
+    "Attachment": {
+      "description": "A file in object storage that the record refers to by `path`.",
+      "type": "object",
+      "properties": {
+        "media_type": {
+          "description": "Media type of the file, for display and download only.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "Relative, `..`-free name, unique within the record; other fields point at it.",
+          "type": "string"
+        },
+        "sha256": {
+          "description": "Lower-case hex sha256 of the file's bytes; the object's address in storage.",
+          "type": "string"
+        },
+        "size": {
+          "description": "Size of the file in bytes.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "size"
+      ]
+    },
+    "Engine": {
+      "description": "Inference engine name and version.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Engine name (`vllm`, `llama.cpp`, `transformers`, …).",
+          "type": "string"
+        },
+        "version": {
+          "description": "Engine version.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    },
+    "Env": {
+      "description": "The software environment the evaluation ran in.",
+      "type": "object",
+      "properties": {
+        "ext": {
+          "description": "Extensions keyed by namespace; not fingerprinted unless registered.",
+          "type": "object",
+          "additionalProperties": true
+        },
+        "git": {
+          "description": "Git state of the code that ran.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Git"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hardware": {
+          "description": "Hardware description. Recorded; does not affect the fingerprint.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Hardware"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "x-fingerprint": false
+        },
+        "os": {
+          "description": "Operating system description. Recorded; does not affect the fingerprint.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-fingerprint": false
+        },
+        "packages": {
+          "description": "Pinned packages that matter to the result.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Package"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "EvalKind": {
+      "description": "What an Eval's material is.",
+      "oneOf": [
+        {
+          "description": "A set of runs, each with its model calls.",
+          "type": "string",
+          "const": "run_set"
+        },
+        {
+          "description": "A set of prompts.",
+          "type": "string",
+          "const": "prompt_set"
+        },
+        {
+          "description": "A set of tasks.",
+          "type": "string",
+          "const": "task_set"
+        },
+        {
+          "description": "A set of traces.",
+          "type": "string",
+          "const": "trace_set"
+        }
+      ]
+    },
+    "Generation": {
+      "description": "Sampling parameters.",
+      "type": "object",
+      "properties": {
+        "ext": {
+          "description": "Extensions keyed by namespace; not fingerprinted unless registered.",
+          "type": "object",
+          "additionalProperties": true
+        },
+        "max_tokens": {
+          "description": "Maximum tokens generated per response.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "n": {
+          "description": "Number of completions requested per prompt.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "reasoning": {
+          "description": "Reasoning (extended thinking) settings.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Reasoning"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "seed": {
+          "description": "Sampling seed.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64"
+        },
+        "stop": {
+          "description": "Stop sequences.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "temperature": {
+          "description": "Sampling temperature.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "top_k": {
+          "description": "Top-k sampling cutoff.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "top_p": {
+          "description": "Nucleus sampling threshold.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Git": {
+      "description": "Git state of the evaluating code.",
+      "type": "object",
+      "properties": {
+        "commit": {
+          "description": "Commit that ran.",
+          "type": "string"
+        },
+        "dirty": {
+          "description": "Whether the working tree had uncommitted changes.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "origin": {
+          "description": "Remote the code came from.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "commit"
+      ]
+    },
+    "Hardware": {
+      "description": "Hardware the evaluation ran on.",
+      "type": "object",
+      "properties": {
+        "cpu": {
+          "description": "CPU model.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "gpu": {
+          "description": "Accelerator model (for example `A100`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "gpu_count": {
+          "description": "Number of accelerators.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "memory_gb": {
+          "description": "Memory in gigabytes.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Harness": {
+      "description": "The harness that drove the evaluation.",
+      "type": "object",
+      "properties": {
+        "config_sha256": {
+          "description": "sha256 of the harness configuration that was in effect.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ext": {
+          "description": "Extensions keyed by namespace; not fingerprinted unless registered.",
+          "type": "object",
+          "additionalProperties": true
+        },
+        "few_shot": {
+          "description": "Number of few-shot examples in the prompt.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "name": {
+          "description": "Harness name.",
+          "type": "string"
+        },
+        "prompt_template_sha256": {
+          "description": "sha256 of the prompt template.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "system_prompt_sha256": {
+          "description": "sha256 of the system prompt.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "description": "Harness version.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version"
+      ]
+    },
+    "Model": {
+      "description": "The model that was evaluated.",
+      "type": "object",
+      "properties": {
+        "availability": {
+          "description": "Availability of the weights (`open`, `api`, `private`, …).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "context_window": {
+          "description": "Context window in tokens. Recorded; does not affect the fingerprint.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "x-fingerprint": false
+        },
+        "endpoint": {
+          "description": "Endpoint the model was reached through, when that changes the result.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "engine": {
+          "description": "Inference engine that ran the model.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Engine"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ext": {
+          "description": "Extensions keyed by namespace; not fingerprinted unless registered.",
+          "type": "object",
+          "additionalProperties": true
+        },
+        "id": {
+          "description": "Model identifier as the producer names it (for example `qwen3.6-32b`).",
+          "type": "string"
+        },
+        "provider": {
+          "description": "Who served the model (`openai`, `anthropic`, `local`, …).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "quantization": {
+          "description": "Quantisation applied to the weights.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Quantization"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "revision": {
+          "description": "Exact revision: a commit, a checkpoint tag, or a provider snapshot date.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id"
+      ]
+    },
+    "Origin": {
+      "description": "How an Eval's material came to exist.",
+      "oneOf": [
+        {
+          "description": "Captured while the evaluation ran.",
+          "type": "string",
+          "const": "live"
+        },
+        {
+          "description": "Rebuilt afterwards from logs.",
+          "type": "string",
+          "const": "reconstructed"
+        },
+        {
+          "description": "Converted from another format.",
+          "type": "string",
+          "const": "imported"
+        }
+      ]
+    },
+    "Outcome": {
+      "description": "How a run ended.",
+      "oneOf": [
+        {
+          "description": "The run completed and passed.",
+          "type": "string",
+          "const": "pass"
+        },
+        {
+          "description": "The run completed and failed.",
+          "type": "string",
+          "const": "fail"
+        },
+        {
+          "description": "The run errored before completion.",
+          "type": "string",
+          "const": "error"
+        },
+        {
+          "description": "The run was skipped.",
+          "type": "string",
+          "const": "skipped"
+        }
+      ]
+    },
+    "Package": {
+      "description": "A pinned package.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Package name.",
+          "type": "string"
+        },
+        "version": {
+          "description": "Package version.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version"
+      ]
+    },
+    "Producer": {
+      "description": "The software that wrote the record. Informational; not a facet.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Name of the producing software (a harness, a converter, a script).",
+          "type": "string"
+        },
+        "version": {
+          "description": "Version of the producing software.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version"
+      ]
+    },
+    "Quantization": {
+      "description": "Weight quantisation.",
+      "type": "object",
+      "properties": {
+        "dtype": {
+          "description": "Storage type (`int4`, `int8`, `fp8`, …).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "method": {
+          "description": "Method (`awq`, `gptq`, `gguf`, …).",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "method"
+      ]
+    },
+    "Reasoning": {
+      "description": "Reasoning settings passed to the model.",
+      "type": "object",
+      "properties": {
+        "budget_tokens": {
+          "description": "Token budget for reasoning.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "effort": {
+          "description": "Provider-defined effort level (`low`, `medium`, `high`, …).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "Redaction": {
+      "description": "The producer's statement about what it removed before publishing.",
+      "type": "object",
+      "properties": {
+        "applied": {
+          "description": "Whether any redaction was applied.",
+          "type": "boolean"
+        },
+        "fields": {
+          "description": "Which fields were redacted, as `attachment path:field` or a record path.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "method": {
+          "description": "How it was applied (for example `regex+llm`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "applied"
+      ]
+    },
+    "Relation": {
+      "description": "An edge from this version to another record version or an external target.",
+      "type": "object",
+      "properties": {
+        "attrs": {
+          "description": "Attributes specific to the relation type (for `uses_eval`, which runs were used).",
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": true
+        },
+        "to": {
+          "description": "Target: `{ns}/{name}@{seq}` on the hub, or `external:<url>` / `hf:<org>/<repo>@<sha>` outside it.",
+          "type": "string"
+        },
+        "type": {
+          "description": "Relation type as a registry id, `{ns}/{name}` (for example `core/uses_eval`).",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "to"
+      ]
+    },
+    "Run": {
+      "description": "One run in a `run_set`.",
+      "type": "object",
+      "properties": {
+        "artifacts": {
+          "description": "`attachments[].path` entries of artifacts the run produced.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "calls": {
+          "description": "`attachments[].path` of the model calls made during the run.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ended_at": {
+          "description": "When the run ended.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "outcome": {
+          "description": "How the run ended.",
+          "$ref": "#/$defs/Outcome"
+        },
+        "run_id": {
+          "description": "Run identifier, unique within the Eval.",
+          "type": "string"
+        },
+        "started_at": {
+          "description": "When the run started.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "run_id",
+        "outcome"
+      ]
+    },
+    "Sandbox": {
+      "description": "Container image the attempts ran in.",
+      "type": "object",
+      "properties": {
+        "digest": {
+          "description": "Content digest of the image (`sha256:…`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "image": {
+          "description": "Image reference (for example `ghcr.io/org/image:tag`).",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "image"
+      ]
+    },
+    "Task": {
+      "description": "The task or benchmark that was run.",
+      "type": "object",
+      "properties": {
+        "config": {
+          "description": "Named task configuration, when the task has more than one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ext": {
+          "description": "Extensions keyed by namespace; not fingerprinted unless registered.",
+          "type": "object",
+          "additionalProperties": true
+        },
+        "id": {
+          "description": "Task identifier as the producer names it (for example `single2`).",
+          "type": "string"
+        },
+        "n": {
+          "description": "Number of items evaluated.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "revision": {
+          "description": "Exact revision of the task material (a commit or dataset revision).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sample_ids_sha256": {
+          "description": "sha256 over the sorted list of sample ids that were evaluated.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "seed": {
+          "description": "Seed used to select or order items.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64"
+        },
+        "shuffled": {
+          "description": "Whether items were shuffled before evaluation.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "source_data": {
+          "description": "Where the task data came from (a URL or dataset id).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "split": {
+          "description": "Split that was evaluated (`test`, `validation`, …).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "description": "Task version, as published by the task's author.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id"
+      ]
+    },
+    "Trial": {
+      "description": "How each item was attempted.",
+      "type": "object",
+      "properties": {
+        "ext": {
+          "description": "Extensions keyed by namespace; not fingerprinted unless registered.",
+          "type": "object",
+          "additionalProperties": true
+        },
+        "k": {
+          "description": "Attempts per item.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "max_turns": {
+          "description": "Maximum agent turns per attempt.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "pass_at_k": {
+          "description": "Whether the score is pass@k over the attempts.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "retries": {
+          "description": "Retries on error per attempt.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "sandbox": {
+          "description": "Sandbox the attempt ran in.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sandbox"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "timeout_ms": {
+          "description": "Timeout per attempt in milliseconds.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

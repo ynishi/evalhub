@@ -75,7 +75,7 @@ axum = "0.8"
 axum-extra = { version = "0.12", features = ["cookie", "cookie-private"] }
 # aide 0.15 (stable) depends on schemars 0.9; the 0.16 line is the one on
 # schemars 1 and axum 0.8. Pinned to the alpha until 0.16.0 ships, then relax.
-aide = { version = "=0.16.0-alpha.4", features = ["axum", "axum-json"] }
+aide = { version = "=0.16.0-alpha.4", features = ["axum", "axum-json", "axum-query"] }
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.7", features = ["trace", "compression-gzip", "set-header", "limit"] }
 rust-embed = "8"

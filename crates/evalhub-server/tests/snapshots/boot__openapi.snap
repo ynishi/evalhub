@@ -5,6 +5,118 @@ expression: body
 {
   "components": {
     "schemas": {
+      "ErrorCode": {
+        "description": "The closed set of error codes.",
+        "oneOf": [
+          {
+            "const": "schema",
+            "description": "JSON Schema violation: unknown key, wrong type, missing required key.",
+            "type": "string"
+          },
+          {
+            "const": "number_too_large",
+            "description": "An integer outside ±2^53.",
+            "type": "string"
+          },
+          {
+            "const": "counts_missing",
+            "description": "`results` is non-empty but `counts` is absent.",
+            "type": "string"
+          },
+          {
+            "const": "counts_inconsistent",
+            "description": "`counts.attempted < completed + failed + skipped + errored`.",
+            "type": "string"
+          },
+          {
+            "const": "attachment_ref_unknown",
+            "description": "A `samples_ref`, `calls` or `artifacts[]` entry names no `attachments[].path`.",
+            "type": "string"
+          },
+          {
+            "const": "attachment_path_invalid",
+            "description": "An `attachments[].path` is duplicated, absolute, or contains `..`.",
+            "type": "string"
+          },
+          {
+            "const": "metric_id_invalid",
+            "description": "A `results[].metric` is not of the form `{ns}/{name}`.",
+            "type": "string"
+          },
+          {
+            "const": "type_mismatch",
+            "description": "Query: operator applied to a path of another type.",
+            "type": "string"
+          },
+          {
+            "const": "not_indexed",
+            "description": "Query: operator needs an index the path does not have.",
+            "type": "string"
+          },
+          {
+            "const": "unknown_path",
+            "description": "Query: path not in the schema.",
+            "type": "string"
+          },
+          {
+            "const": "attachment_missing",
+            "description": "An `attachments[].sha256` has not been uploaded and confirmed.",
+            "type": "string"
+          },
+          {
+            "const": "label_in_use",
+            "description": "The requested `@{label}` already names another version.",
+            "type": "string"
+          }
+        ]
+      },
+      "ErrorEntry": {
+        "additionalProperties": false,
+        "description": "One rejection.",
+        "properties": {
+          "code": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ErrorCode"
+              }
+            ],
+            "description": "The code."
+          },
+          "hint": {
+            "description": "Prose for a human. Not part of the contract.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path": {
+            "description": "Location in the submitted document, JSON-pointer-like (`results[0].metric`).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "code"
+        ],
+        "type": "object"
+      },
+      "ErrorEnvelope": {
+        "additionalProperties": false,
+        "description": "The body of every `422` and `409` response.",
+        "properties": {
+          "errors": {
+            "description": "Every rejection found, in document order.",
+            "items": {
+              "$ref": "#/components/schemas/ErrorEntry"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "errors"
+        ],
+        "type": "object"
+      },
       "Health": {
         "description": "`GET /api/v1/healthz`",
         "properties": {
@@ -20,6 +132,98 @@ expression: body
         "required": [
           "status",
           "database"
+        ],
+        "type": "object"
+      },
+      "PostQuery": {
+        "description": "Query string of `POST`.",
+        "properties": {
+          "label": {
+            "description": "Label to attach to the new version. Never purely numeric.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "RecordPath": {
+        "description": "Path of a record: `/{cards|evals}/{ns}/{name}`.",
+        "properties": {
+          "name": {
+            "description": "Record name, optionally followed by `@{seq}` to address one version.",
+            "type": "string"
+          },
+          "ns": {
+            "description": "Namespace: a user login or an organisation slug.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ns",
+          "name"
+        ],
+        "type": "object"
+      },
+      "VersionEnvelope": {
+        "description": "What the hub adds around a stored version.",
+        "properties": {
+          "badges": {
+            "description": "Badges awarded at ingest.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "changed": {
+            "description": "Top-level keys whose value differs from the previous version.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "content_hash": {
+            "description": "Hex sha256 of the canonical record.",
+            "type": "string"
+          },
+          "created_at": {
+            "description": "When the hub stored this version.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "description": "Identifier of the named record, stable across versions (ULID).",
+            "type": "string"
+          },
+          "label": {
+            "description": "Client-chosen label of this version, if any.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "record": {
+            "description": "The canonical record. Absent in `POST` responses and for tombstones."
+          },
+          "seq": {
+            "description": "Sequence number within the name, from 1, gap-free.",
+            "format": "int32",
+            "type": "integer"
+          },
+          "version_id": {
+            "description": "Identifier of this version (ULID). Relations point at these.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "version_id",
+          "seq",
+          "content_hash",
+          "created_at",
+          "changed",
+          "badges"
         ],
         "type": "object"
       },
@@ -62,6 +266,386 @@ expression: body
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/cards/{ns}/{name}": {
+      "get": {
+        "description": "The latest live version of `{ns}/{name}`, or the version `@{seq}`. Private records are `404` to a caller whose token does not cover `ns`.",
+        "operationId": "get_card",
+        "parameters": [
+          {
+            "description": "Record name, optionally followed by `@{seq}` to address one version.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Record name, optionally followed by `@{seq}` to address one version.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "Namespace: a user login or an organisation slug.",
+            "in": "path",
+            "name": "ns",
+            "required": true,
+            "schema": {
+              "description": "Namespace: a user login or an organisation slug.",
+              "type": "string"
+            },
+            "style": "simple"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionEnvelope"
+                }
+              }
+            },
+            "description": "The version and the hub's facts about it."
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Read a Card version"
+      },
+      "post": {
+        "description": "Validates the body, canonicalises it and stores it as the next version of `{ns}/{name}`, creating the name if needed. Requires a token with `write` on `ns`. If the canonical body equals the latest version's, that version is returned with `200` and nothing is written.",
+        "operationId": "post_card",
+        "parameters": [
+          {
+            "description": "Record name, optionally followed by `@{seq}` to address one version.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Record name, optionally followed by `@{seq}` to address one version.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "Namespace: a user login or an organisation slug.",
+            "in": "path",
+            "name": "ns",
+            "required": true,
+            "schema": {
+              "description": "Namespace: a user login or an organisation slug.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "Label to attach to the new version. Never purely numeric.",
+            "in": "query",
+            "name": "label",
+            "schema": {
+              "description": "Label to attach to the new version. Never purely numeric.",
+              "type": "string"
+            },
+            "style": "form"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": true
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionEnvelope"
+                }
+              }
+            },
+            "description": "The body equals the latest version; that version is returned."
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionEnvelope"
+                }
+              }
+            },
+            "description": "A new version was stored."
+          },
+          "400": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Failed to parse the request body as JSON"
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "415": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Expected request with `Content-Type: application/json`"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Append a Card version"
+      }
+    },
+    "/api/v1/evals/{ns}/{name}": {
+      "get": {
+        "description": "The latest live version of `{ns}/{name}`, or the version `@{seq}`. Private records are `404` to a caller whose token does not cover `ns`.",
+        "operationId": "get_eval",
+        "parameters": [
+          {
+            "description": "Record name, optionally followed by `@{seq}` to address one version.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Record name, optionally followed by `@{seq}` to address one version.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "Namespace: a user login or an organisation slug.",
+            "in": "path",
+            "name": "ns",
+            "required": true,
+            "schema": {
+              "description": "Namespace: a user login or an organisation slug.",
+              "type": "string"
+            },
+            "style": "simple"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionEnvelope"
+                }
+              }
+            },
+            "description": "The version and the hub's facts about it."
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Read an Eval version"
+      },
+      "post": {
+        "description": "Validates the body, canonicalises it and stores it as the next version of `{ns}/{name}`, creating the name if needed. Requires a token with `write` on `ns`. If the canonical body equals the latest version's, that version is returned with `200` and nothing is written.",
+        "operationId": "post_eval",
+        "parameters": [
+          {
+            "description": "Record name, optionally followed by `@{seq}` to address one version.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Record name, optionally followed by `@{seq}` to address one version.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "Namespace: a user login or an organisation slug.",
+            "in": "path",
+            "name": "ns",
+            "required": true,
+            "schema": {
+              "description": "Namespace: a user login or an organisation slug.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "Label to attach to the new version. Never purely numeric.",
+            "in": "query",
+            "name": "label",
+            "schema": {
+              "description": "Label to attach to the new version. Never purely numeric.",
+              "type": "string"
+            },
+            "style": "form"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": true
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionEnvelope"
+                }
+              }
+            },
+            "description": "The body equals the latest version; that version is returned."
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionEnvelope"
+                }
+              }
+            },
+            "description": "A new version was stored."
+          },
+          "400": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Failed to parse the request body as JSON"
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "415": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Expected request with `Content-Type: application/json`"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Append an Eval version"
+      }
+    },
     "/api/v1/healthz": {
       "get": {
         "description": "Answers as long as the process is up.",

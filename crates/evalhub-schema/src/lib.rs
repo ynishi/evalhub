@@ -117,3 +117,47 @@ pub const CARD_SCHEMA: &str = "evalhub.card/1.0";
 
 /// Schema identifier carried by every Eval record.
 pub const EVAL_SCHEMA: &str = "evalhub.eval/1.0";
+
+/// Names under which the server serves the generated schemas
+/// (`GET /schemas/{name}`), in the order [`all_schemas`] returns them.
+pub const SCHEMA_NAMES: [&str; 4] = ["card", "eval", "error", "query"];
+
+/// Generator settings shared by every schema: JSON Schema draft 2020-12, the
+/// dialect OpenAPI 3.1 uses, so the served files and `openapi.json` agree.
+fn generator() -> schemars::SchemaGenerator {
+    schemars::generate::SchemaSettings::draft2020_12().into_generator()
+}
+
+/// The JSON Schema of a [`card::Card`]. `$id` is not set; the server sets it
+/// to the URL it serves the schema from.
+pub fn schema_for_card() -> schemars::Schema {
+    generator().into_root_schema_for::<card::Card>()
+}
+
+/// The JSON Schema of an [`eval::Eval`].
+pub fn schema_for_eval() -> schemars::Schema {
+    generator().into_root_schema_for::<eval::Eval>()
+}
+
+/// The JSON Schema of the [`error::ErrorEnvelope`] returned with `422` / `409`.
+pub fn schema_for_error() -> schemars::Schema {
+    generator().into_root_schema_for::<error::ErrorEnvelope>()
+}
+
+/// The JSON Schema of the [`query::QueryRequest`] envelope. The filter inside
+/// `where` is left open here; the query language defines it.
+pub fn schema_for_query() -> schemars::Schema {
+    generator().into_root_schema_for::<query::QueryRequest>()
+}
+
+/// Every served schema with its name, in [`SCHEMA_NAMES`] order. The
+/// committed files under `schemas/` are generated from this list, and a test
+/// asserts they are current.
+pub fn all_schemas() -> Vec<(&'static str, schemars::Schema)> {
+    vec![
+        ("card", schema_for_card()),
+        ("eval", schema_for_eval()),
+        ("error", schema_for_error()),
+        ("query", schema_for_query()),
+    ]
+}

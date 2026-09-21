@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO orgs (ns) VALUES ($1) ON CONFLICT (ns) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "364522b1e5f39fb5310b9e23a47e1a98b979512dfbf438380ecc0e7e815598f4"
+}

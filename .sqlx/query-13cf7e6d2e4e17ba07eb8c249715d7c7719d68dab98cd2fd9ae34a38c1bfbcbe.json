@@ -1,0 +1,140 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT r.id AS record_id, r.visibility,\n                v.version_id, v.seq, v.label, v.content_hash, v.body, v.created_at, v.changed, v.badges\n         FROM records r\n         JOIN versions v ON v.record_id = r.id\n         WHERE r.type = $1 AND r.ns = $2 AND r.name = $3 AND v.seq = $4\n           AND (r.visibility = 'public' OR r.ns = ANY($5))",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "record_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "records",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "visibility",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "records",
+            "name": "visibility"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "version_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "versions",
+            "name": "version_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "seq",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "versions",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "label",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "versions",
+            "name": "label"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "content_hash",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "versions",
+            "name": "content_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "body",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "versions",
+            "name": "body"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "versions",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "changed",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "versions",
+            "name": "changed"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "badges",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "versions",
+            "name": "badges"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Int4",
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "13cf7e6d2e4e17ba07eb8c249715d7c7719d68dab98cd2fd9ae34a38c1bfbcbe"
+}

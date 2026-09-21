@@ -66,5 +66,36 @@ async fn openapi_is_3_1_and_stable() {
         body["openapi"]
     );
     assert_eq!(body["info"]["title"], "evalhub");
+    assert!(
+        body["paths"]["/api/v1/cards/{ns}/{name}"]["post"].is_object(),
+        "record routes are documented"
+    );
     insta::assert_json_snapshot!("openapi", body);
+}
+
+#[tokio::test]
+async fn schemas_are_served_with_id() {
+    let res = app()
+        .oneshot(
+            Request::get("/schemas/card")
+                .header("host", "hub.example")
+                .header("x-forwarded-proto", "https")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = to_bytes(res.into_body(), 1 << 20).await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["$id"], "https://hub.example/schemas/card");
+    assert!(
+        body["$schema"].as_str().unwrap().contains("2020-12"),
+        "{}",
+        body["$schema"]
+    );
+    assert_eq!(body["additionalProperties"], false);
+
+    let (status, _) = get("/schemas/nope").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }

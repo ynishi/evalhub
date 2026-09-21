@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "QueryRequest",
+  "description": "The body of `POST /cards/query` and `POST /evals/query`.",
+  "type": "object",
+  "properties": {
+    "cursor": {
+      "description": "Opaque cursor from a previous page's `next_cursor`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "expand": {
+      "description": "Extra fields to include on each item.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Expand"
+      }
+    },
+    "limit": {
+      "description": "Page size. The server clamps it to its maximum.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint32",
+      "minimum": 0
+    },
+    "sort": {
+      "description": "Sort keys, applied in order.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Sort"
+      }
+    },
+    "version": {
+      "description": "Which versions to search. Defaults to `latest`.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/VersionSelector"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "where": {
+      "description": "The filter: `and` / `or` / `not` / leaf. Grammar and legal paths are\ndefined by the query language; see `GET /schemas/query`."
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "Dir": {
+      "description": "Sort direction.",
+      "oneOf": [
+        {
+          "description": "Ascending.",
+          "type": "string",
+          "const": "asc"
+        },
+        {
+          "description": "Descending.",
+          "type": "string",
+          "const": "desc"
+        }
+      ]
+    },
+    "Expand": {
+      "description": "Optional parts of a version that a read can include.",
+      "oneOf": [
+        {
+          "description": "The version's edges.",
+          "type": "string",
+          "const": "relations"
+        },
+        {
+          "description": "The version's badges.",
+          "type": "string",
+          "const": "badges"
+        },
+        {
+          "description": "The seven facet fingerprints.",
+          "type": "string",
+          "const": "fingerprints"
+        },
+        {
+          "description": "The top-level keys that changed from the previous version.",
+          "type": "string",
+          "const": "changed"
+        }
+      ]
+    },
+    "Sort": {
+      "description": "One sort key.",
+      "type": "object",
+      "properties": {
+        "dir": {
+          "description": "Direction.",
+          "$ref": "#/$defs/Dir"
+        },
+        "path": {
+          "description": "A query path (for example `results[core/pass_rate].value`).",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "dir"
+      ]
+    },
+    "VersionSelector": {
+      "description": "Which versions a query considers.",
+      "oneOf": [
+        {
+          "description": "Only the latest non-tombstoned version of each name.",
+          "type": "string",
+          "const": "latest"
+        },
+        {
+          "description": "Every non-tombstoned version.",
+          "type": "string",
+          "const": "all"
+        }
+      ]
+    }
+  }
+}
