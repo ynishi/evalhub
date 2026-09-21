@@ -65,7 +65,8 @@ cargo test -p evalhub-server     # needs Docker
 cargo deny check
 ```
 
-`just check` runs that list. Do not run `cargo test --workspace` as the
+`just check` runs that list, and CI (`.github/workflows/ci.yml`) runs it,
+`just e2e` and `just package` on every push and pull request. Do not run `cargo test --workspace` as the
 routine check: linking every test binary in parallel is what exhausts memory
 on a shared machine. Run the crates you touched, then the ones that depend on
 them.
