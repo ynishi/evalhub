@@ -45,8 +45,6 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
-    env:
-      DATABASE_URL: postgres://postgres:pw@127.0.0.1:5432/evalhub
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -76,6 +74,12 @@ jobs:
         run: cargo test -p evalhub-server --locked
 
       - name: sqlx offline data is current
+        # Only this step may see DATABASE_URL. With it set, the sqlx macros
+        # go online and check every query against the database, so clippy
+        # and the tests would fail against the service before it has been
+        # migrated; without it they use the committed offline data.
+        env:
+          DATABASE_URL: postgres://postgres:pw@127.0.0.1:5432/evalhub
         run: |
           sqlx migrate run --source crates/evalhub-store/migrations
           just sqlx-check
