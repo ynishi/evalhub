@@ -5,7 +5,8 @@ members = ["crates/*"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.88"
+# sqlx 0.9 declares rust-version 1.94.0; the workspace cannot claim less.
+rust-version = "1.94"
 license = "AGPL-3.0-only"
 authors = ["Yutaka Nishimura"]
 repository = "https://github.com/ynishi/evalhub"
@@ -47,8 +48,13 @@ schemars = { version = "1", features = ["chrono04"] }
 jsonschema = { version = "0.56", default-features = false }
 serde_json_canonicalizer = "0.3"
 
-# query DSL
-dsl-kit = "0.11"
+# query DSL. The `dsl-kit` facade re-exports only the interpreter side
+# (dsl-kit-core + the DslNode derive); the grammar needs the schema
+# reflection, the JSON front-end and the DslSchema / DslBuild derives,
+# which live in these three crates.
+dsl-kit-macros = "0.11"
+dsl-kit-schema = "0.11"
+dsl-kit-parse = "0.11"
 
 # storage
 sqlx = { version = "0.9", default-features = false, features = [
@@ -66,7 +72,7 @@ object_store = { version = "0.14", features = ["aws"] }
 # server
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 axum = "0.8"
-axum-extra = { version = "0.12", features = ["cookie-private"] }
+axum-extra = { version = "0.12", features = ["cookie", "cookie-private"] }
 # aide 0.15 (stable) depends on schemars 0.9; the 0.16 line is the one on
 # schemars 1 and axum 0.8. Pinned to the alpha until 0.16.0 ships, then relax.
 aide = { version = "=0.16.0-alpha.4", features = ["axum", "axum-json"] }
