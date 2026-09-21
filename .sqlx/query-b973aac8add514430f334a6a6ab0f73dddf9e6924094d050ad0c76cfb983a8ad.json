@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT r.id AS record_id, r.visibility,\n                v.version_id, v.seq, v.label, v.content_hash, v.body, v.created_at, v.changed, v.badges\n         FROM records r\n         JOIN versions v ON v.record_id = r.id\n         WHERE r.type = $1 AND r.ns = $2 AND r.name = $3\n           AND (r.visibility = 'public' OR r.ns = ANY($4))\n           AND v.tombstoned_at IS NULL\n         ORDER BY v.seq DESC LIMIT 1",
+  "query": "SELECT r.id AS record_id, r.visibility,\n                v.version_id, v.seq, v.label, v.content_hash, NULL::jsonb AS body, v.created_at, v.changed, v.badges,\n                v.tombstoned_at, v.tombstone_reason, v.tombstone_note\n         FROM records r\n         JOIN versions v ON v.record_id = r.id\n         WHERE r.type = $1 AND r.ns = $2 AND r.name = $3\n         ORDER BY v.seq ASC",
   "describe": {
     "columns": [
       {
@@ -73,12 +73,7 @@
         "ordinal": 6,
         "name": "body",
         "type_info": "Jsonb",
-        "origin": {
-          "Table": {
-            "table": "versions",
-            "name": "body"
-          }
-        }
+        "origin": "Expression"
       },
       {
         "ordinal": 7,
@@ -112,14 +107,46 @@
             "name": "badges"
           }
         }
+      },
+      {
+        "ordinal": 10,
+        "name": "tombstoned_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "versions",
+            "name": "tombstoned_at"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "tombstone_reason",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "versions",
+            "name": "tombstone_reason"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "tombstone_note",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "versions",
+            "name": "tombstone_note"
+          }
+        }
       }
     ],
     "parameters": {
       "Left": [
         "Text",
         "Text",
-        "Text",
-        "TextArray"
+        "Text"
       ]
     },
     "nullable": [
@@ -129,11 +156,14 @@
       false,
       true,
       false,
+      null,
+      false,
+      false,
+      false,
       true,
-      false,
-      false,
-      false
+      true,
+      true
     ]
   },
-  "hash": "a0fc0e1108d4c2ea8f7f8f20fe6d47cf47d1e920f0524d7a73e181f27e16f177"
+  "hash": "b973aac8add514430f334a6a6ab0f73dddf9e6924094d050ad0c76cfb983a8ad"
 }

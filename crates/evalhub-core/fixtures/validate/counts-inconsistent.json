@@ -1,0 +1,7 @@
+{
+  "schema": "evalhub.card/1.0",
+  "title": "attempted below the sum",
+  "producer": {"name": "h", "version": "1"},
+  "results": [{"metric": "core/pass_rate", "value": 0.5, "aggregation": "mean"}],
+  "counts": {"attempted": 10, "completed": 8, "failed": 2, "skipped": 1, "errored": 0}
+}

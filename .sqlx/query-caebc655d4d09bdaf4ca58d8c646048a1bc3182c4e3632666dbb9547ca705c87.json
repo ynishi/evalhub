@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE versions SET label = NULL WHERE record_id = $1 AND label = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "caebc655d4d09bdaf4ca58d8c646048a1bc3182c4e3632666dbb9547ca705c87"
+}

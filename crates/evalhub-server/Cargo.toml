@@ -42,6 +42,7 @@ thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 sha2.workspace = true
+hex.workspace = true
 hmac.workspace = true
 subtle.workspace = true
 base64.workspace = true
@@ -52,3 +53,10 @@ chrono.workspace = true
 [dev-dependencies]
 insta.workspace = true
 testcontainers-modules.workspace = true
+# Integration tests seed rows the endpoints under test do not write yet
+# (a confirmed attachment, for instance). The library never uses sqlx
+# directly; the store owns every query.
+sqlx.workspace = true
+# The attachment tests upload to and download from the presigned URLs the
+# hub hands out, which is the one thing no in-process call can stand in for.
+reqwest.workspace = true

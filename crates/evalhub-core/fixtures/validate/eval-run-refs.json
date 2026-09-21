@@ -1,0 +1,15 @@
+{
+  "schema": "evalhub.eval/1.0",
+  "title": "run pointers that name no attachment",
+  "producer": {"name": "h", "version": "1"},
+  "eval_kind": "run_set",
+  "origin": "live",
+  "runs": [
+    {"run_id": "r1", "outcome": "pass", "calls": "calls/r1.jsonl", "artifacts": ["art/ok.txt", "art/missing.txt"]},
+    {"run_id": "r2", "outcome": "fail", "calls": "calls/nope.jsonl"}
+  ],
+  "attachments": [
+    {"path": "calls/r1.jsonl", "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "size": 1},
+    {"path": "art/ok.txt", "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "size": 1}
+  ]
+}

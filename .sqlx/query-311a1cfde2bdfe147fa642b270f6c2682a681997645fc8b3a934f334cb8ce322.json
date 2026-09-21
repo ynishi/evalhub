@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO namespaces (ns, kind) VALUES ($1, 'org')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "311a1cfde2bdfe147fa642b270f6c2682a681997645fc8b3a934f334cb8ce322"
+}

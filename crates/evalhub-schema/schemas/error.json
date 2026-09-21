@@ -79,6 +79,11 @@
           "description": "The requested `@{label}` already names another version.",
           "type": "string",
           "const": "label_in_use"
+        },
+        {
+          "description": "The requested organisation slug is already a user or an organisation.",
+          "type": "string",
+          "const": "namespace_in_use"
         }
       ]
     },

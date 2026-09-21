@@ -28,7 +28,12 @@ chrono.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 tokio.workspace = true
+futures.workspace = true
+url.workspace = true
+sha2.workspace = true
+hex.workspace = true
 
 [dev-dependencies]
 testcontainers-modules.workspace = true
 insta.workspace = true
+reqwest.workspace = true

@@ -26,6 +26,7 @@
 //! | `unknown_path`           | 422    | query: path not in the schema                                        |
 //! | `attachment_missing`     | 409    | `attachments[].sha256` not uploaded and confirmed                    |
 //! | `label_in_use`           | 409    | `@{label}` already names another version                             |
+//! | `namespace_in_use`       | 409    | the organisation slug is already a user or an organisation           |
 //!
 //! Other statuses carry no body of this shape: `404` for anything the caller
 //! may not know exists (including private records), `403` for a token
@@ -66,13 +67,15 @@ pub enum ErrorCode {
     AttachmentMissing,
     /// The requested `@{label}` already names another version.
     LabelInUse,
+    /// The requested organisation slug is already a user or an organisation.
+    NamespaceInUse,
 }
 
 impl ErrorCode {
     /// The HTTP status this code is returned with.
     pub const fn status(self) -> u16 {
         match self {
-            ErrorCode::AttachmentMissing | ErrorCode::LabelInUse => 409,
+            ErrorCode::AttachmentMissing | ErrorCode::LabelInUse | ErrorCode::NamespaceInUse => 409,
             _ => 422,
         }
     }

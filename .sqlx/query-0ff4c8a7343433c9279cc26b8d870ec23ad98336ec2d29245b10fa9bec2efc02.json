@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COUNT(*) AS \"count!\" FROM records r\n               WHERE r.type = $1 AND r.ns = $2\n                 AND (r.visibility = 'public' OR r.ns = ANY($3))\n                 AND EXISTS (SELECT 1 FROM versions v WHERE v.record_id = r.id AND v.tombstoned_at IS NULL)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "0ff4c8a7343433c9279cc26b8d870ec23ad98336ec2d29245b10fa9bec2efc02"
+}

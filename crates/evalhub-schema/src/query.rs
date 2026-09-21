@@ -100,8 +100,13 @@ pub enum VersionSelector {
 }
 
 /// One page of results.
+///
+/// The schema name carries the item type (`Page_for_VersionEnvelope`), so a
+/// generated client gets one page type per item type instead of `Page` and
+/// `Page2`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(rename = "Page_for_{T}")]
 pub struct Page<T> {
     /// The items on this page.
     pub items: Vec<T>,

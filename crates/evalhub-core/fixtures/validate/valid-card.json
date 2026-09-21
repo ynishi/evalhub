@@ -1,0 +1,26 @@
+{
+  "schema": "evalhub.card/1.0",
+  "title": "qwen3.6-32b on single2 K4",
+  "producer": {"name": "my-harness", "version": "0.4.1"},
+  "model": {"id": "qwen3.6-32b", "provider": "local", "quantization": {"method": "awq", "dtype": "int4"}},
+  "task": {"id": "single2", "version": "3", "split": "test", "n": 33, "seed": 7},
+  "harness": {"name": "my-harness", "version": "0.4.1", "prompt_template_sha256": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4"},
+  "generation": {"temperature": 0.0, "max_tokens": 4096},
+  "trial": {"k": 4, "pass_at_k": true, "max_turns": 20, "sandbox": {"image": "ghcr.io/x/y", "digest": "sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"}},
+  "grading": {"graders": [{"name": "exact_match", "kind": "deterministic"}]},
+  "env": {"git": {"origin": "https://github.com/x/y", "commit": "abc123", "dirty": false}},
+  "results": [{
+    "metric": "core/pass_rate",
+    "value": 0.62, "n": 33,
+    "aggregation": "mean",
+    "uncertainty": {"stderr": 0.08, "ci": {"level": 0.95, "low": 0.45, "high": 0.77}},
+    "by": {"grader": "exact_match"},
+    "samples_ref": "samples.jsonl"
+  }],
+  "counts": {"attempted": 33, "completed": 30, "failed": 2, "skipped": 1, "errored": 0},
+  "relations": [{"type": "core/uses_eval", "to": "alice/single2-k4@3", "attrs": {"runs": ["r1"]}}],
+  "attachments": [{"path": "samples.jsonl", "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "size": 12345, "media_type": "application/x-ndjson"}],
+  "redaction": {"applied": true, "method": "regex+llm", "fields": ["samples.jsonl:response"]},
+  "provenance": {"source_type": "evaluation_run", "evaluator_relationship": "first_party"},
+  "ext": {"alice/qwen-loop": {"rung": 4}}
+}

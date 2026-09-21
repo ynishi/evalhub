@@ -57,7 +57,7 @@
 //!
 //! - [`canonical`] — RFC 8785 serialisation and the content hash.
 //! - [`fingerprint`] — per-facet hashing with schema-driven exclusion.
-//! - [`validate`] — structural and semantic checks, error collection.
+//! - [`mod@validate`] — structural and semantic checks, error collection.
 //! - [`badge`] — the badge rules and their inputs.
 //! - [`registry`] — the `core/` registry entries (metrics, relation types)
 //!   that ship with the hub and are read-only.
@@ -70,5 +70,8 @@ pub mod id;
 pub mod registry;
 pub mod validate;
 
+pub use badge::{Badge, BadgeInput, compute as compute_badges};
 pub use canonical::{ContentHash, canonicalize, content_hash};
+pub use fingerprint::{Facet, Fingerprints, fingerprints};
 pub use id::{RecordId, VersionId};
+pub use validate::validate;

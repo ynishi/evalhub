@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE tokens SET revoked_at = now()\n         WHERE token_id = $1 AND user_id = $2 AND revoked_at IS NULL\n         RETURNING namespaces",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "namespaces",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "tokens",
+            "name": "namespaces"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "e38dcd822dbc012172936a925bf8f52217befb29b38086455ef63974f5afb914"
+}

@@ -1,0 +1,7 @@
+[
+  {"path": "/attachments/1/path", "code": "attachment_path_invalid"},
+  {"path": "/attachments/2/path", "code": "attachment_path_invalid"},
+  {"path": "/attachments/3/path", "code": "attachment_path_invalid"},
+  {"path": "/attachments/4/path", "code": "attachment_path_invalid"},
+  {"path": "/results/1/samples_ref", "code": "attachment_ref_unknown"}
+]

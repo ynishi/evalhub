@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM org_members m USING users u\n         WHERE m.ns = $1 AND m.user_id = $2 AND u.user_id = m.user_id\n         RETURNING u.login",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "login",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "login"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "1847e72785ec1cfc2f1860e106c5021e2a39b1be2925f1f2f2b02b1a47106c7a"
+}

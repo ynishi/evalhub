@@ -12,6 +12,11 @@
 //! Long-running DDL that must not run inside a transaction
 //! (`CREATE INDEX CONCURRENTLY`) does not go through the migrator; it is
 //! issued by [`crate::index`] on a dedicated connection.
+//!
+//! [`AdvisoryLock`] is how the background jobs make sure that when several
+//! replicas run, only one does a given sweep. It lives here because every
+//! statement the hub issues lives in this crate; the jobs themselves are
+//! `evalhub_server::jobs`.
 
 use sqlx::PgPool;
 use sqlx::migrate::Migrate;
@@ -52,4 +57,41 @@ pub async fn pending_migrations(pool: &PgPool) -> Result<Vec<i64>, StoreError> {
         .filter(|m| !applied.contains(&m.version))
         .map(|m| m.version)
         .collect())
+}
+
+/// A held Postgres advisory lock.
+///
+/// The lock is tied to the connection that took it, so it is released
+/// when [`AdvisoryLock::release`] is called or, failing that, when the
+/// connection goes back to the pool and the session ends — which is what
+/// makes a replica that dies mid-sweep harmless.
+pub struct AdvisoryLock {
+    conn: sqlx::pool::PoolConnection<sqlx::Postgres>,
+    key: i64,
+}
+
+impl AdvisoryLock {
+    /// Take the lock for `key`, or return `None` when another session
+    /// holds it. Never waits: a caller that finds the lock held has
+    /// nothing to add, because the holder is doing the same work.
+    pub async fn try_acquire(pool: &PgPool, key: i64) -> Result<Option<Self>, StoreError> {
+        let mut conn = pool.acquire().await.map_err(StoreError::Query)?;
+        let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
+            .bind(key)
+            .fetch_one(&mut *conn)
+            .await
+            .map_err(StoreError::Query)?;
+        Ok(locked.then_some(Self { conn, key }))
+    }
+
+    /// Release the lock. Dropping the value instead also releases it, at
+    /// the end of the session rather than now.
+    pub async fn release(mut self) -> Result<(), StoreError> {
+        sqlx::query_scalar::<_, bool>("SELECT pg_advisory_unlock($1)")
+            .bind(self.key)
+            .fetch_one(&mut *self.conn)
+            .await
+            .map_err(StoreError::Query)?;
+        Ok(())
+    }
 }
