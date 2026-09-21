@@ -1,0 +1,7 @@
+{
+  "schema": "evalhub.card/1.0",
+  "title": "unknown top-level and facet keys",
+  "producer": {"name": "h", "version": "1"},
+  "model": {"id": "m", "surprise": 1},
+  "surprise": true
+}

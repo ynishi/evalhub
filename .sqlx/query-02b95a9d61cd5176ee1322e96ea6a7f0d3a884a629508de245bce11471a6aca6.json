@@ -1,0 +1,54 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT from_version_id, type AS relation_type, attrs\n         FROM relations\n         WHERE (to_version_id = $1 OR to_external = $2)\n           AND ($3::text[] IS NULL OR type = ANY($3))\n         ORDER BY type, from_version_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "from_version_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "relations",
+            "name": "from_version_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "relation_type",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "relations",
+            "name": "type"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "attrs",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "relations",
+            "name": "attrs"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "02b95a9d61cd5176ee1322e96ea6a7f0d3a884a629508de245bce11471a6aca6"
+}

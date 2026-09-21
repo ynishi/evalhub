@@ -61,22 +61,72 @@ Everything is under `/api/v1`; the contract is `GET /openapi.json` (OpenAPI
 3.1) and the record schemas are `GET /schemas/{card|eval|error|query}`.
 Writes need `Authorization: Bearer <token>` with `write` on the namespace;
 reads of public records need nothing, and private records are `404` to
-anyone the token does not cover.
+anyone the token does not cover. A token acts only in the namespaces it
+names, so a personal token does not reach an organisation: ask for one that
+covers it.
 
-| Method | Path                                  | Does                                                                                   |
-| ------ | ------------------------------------- | -------------------------------------------------------------------------------------- |
-| `POST` | `/cards/{ns}/{name}?label=`           | Append a Card version. `201` with `{ id, version_id, seq, label, content_hash, changed[], badges[] }`; `200` and the existing version when the canonical body equals the latest; `422 { errors[] }` when the shape is wrong; `409 label_in_use`. |
-| `GET`  | `/cards/{ns}/{name}[@{seq}]`          | The latest live version, or one by sequence number, with the canonical `record`.       |
-| `POST` | `/evals/{ns}/{name}?label=`           | Same for an Eval.                                                                      |
-| `GET`  | `/evals/{ns}/{name}[@{seq}]`          | Same for an Eval.                                                                      |
-| `GET`  | `/whoami`                             | The token's user, scope and namespaces, or all empty.                                  |
-| `GET`  | `/healthz`                            | Liveness.                                                                              |
+### Records
+
+`{cards|evals}` below is one or the other; the two behave identically.
+
+| Method   | Path                                            | Does                                                                                     |
+| -------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `POST`   | `/{cards\|evals}/{ns}/{name}?label=`            | Validate, canonicalise and append a version. `201` with `{ id, version_id, seq, label, content_hash, created_at, changed[], badges[] }`; `200` and the existing version when the canonical body equals the latest; `422 { errors[] }` with every violation; `409 attachment_missing` or `label_in_use`. |
+| `GET`    | `/{cards\|evals}/{ns}/{name}[@{seq}\|@{label}]` | The latest live version, or one addressed by sequence number or label, with the canonical `record`. `?expand=fingerprints,badges,changed` adds the hub's derived facts. A tombstoned version comes back with `tombstone` and no `record`. |
+| `GET`    | `/{cards\|evals}/{ns}/{name}/versions`          | Every version, oldest first, tombstones included, without bodies.                          |
+| `PATCH`  | `/{cards\|evals}/{ns}/{name}@{seq}/label`       | Point a label at that version. Labels are unique within the name and never purely numeric. |
+| `PATCH`  | `/{cards\|evals}/{ns}/{name}/settings`          | `{ "visibility": "public" \| "private" }`.                                                 |
+| `DELETE` | `/{cards\|evals}/{ns}/{name}@{seq}`             | Tombstone with `{ "reason": "withdrawn\|duplicate\|takedown\|other", "note": … }`. The body goes; the version id, the content hash and `changed[]` stay. |
+| `GET`    | `/{cards\|evals}?ns&search&sort&cursor&limit`   | Page over names with a live version. `sort` is `created_desc` (default), `created_asc` or `name_asc`; paging is by opaque cursor. |
+
+### Identity
+
+| Method   | Path                              | Does                                                                     |
+| -------- | --------------------------------- | ------------------------------------------------------------------------ |
+| `GET`    | `/whoami`                         | The token's user, scope, namespaces and organisation roles.              |
+| `GET`    | `/tokens`                         | The caller's tokens, by prefix. Secrets are shown once, at issue.        |
+| `POST`   | `/tokens`                         | Issue one: `{ scope, namespaces[] }`, capped by the presenting token's scope and by the caller's own login and admin organisations. |
+| `DELETE` | `/tokens/{token_id}`              | Revoke one of the caller's tokens, effective at once.                    |
+| `GET`    | `/namespaces/{ns}`                | Kind, creation time, and counts of what the caller may see.              |
+| `POST`   | `/orgs`                           | Create an organisation; the caller becomes its first `admin`.            |
+| `GET`    | `/orgs/{org}/members`             | The roster. Any member may read it.                                      |
+| `POST`   | `/orgs/{org}/members`             | `{ user, role }`; `admin` on the organisation.                           |
+| `DELETE` | `/orgs/{org}/members/{user}`      | Remove a member; `admin` on the organisation.                            |
+| `GET`    | `/audit?ns&cursor&limit`          | The namespace's append-only log, newest first; `admin` on the namespace. |
+| `GET`    | `/healthz`                        | Liveness.                                                                |
 
 A record is the client's claim, kept verbatim in canonical form (RFC 8785);
-the hub adds the identifiers, the sequence number and the `content_hash`.
-Attachments, relations, labels as addresses, tombstones, listing and the
-query language are the next milestones (see the `evalhub_server` crate doc,
-"Build order").
+the hub adds the identifiers, the sequence number, the `content_hash`, the
+seven per-facet fingerprints and the badges. Badges name facts the hub
+checked (`refs_resolved`, `env_pinned`, `redacted`, and, once the registry
+exists, `harness_registered` and `metric_registered`); there is no
+`verified` badge, because the hub did not run anything.
+
+### Attachments and relations
+
+| Method   | Path                                              | Does                                                                        |
+| -------- | ------------------------------------------------- | --------------------------------------------------------------------------- |
+| `POST`   | `/attachments`                                    | Announce `{ sha256, size, media_type }`. `201` with a presigned `PUT` URL, or `200 { state: "ready" }` when those bytes are already stored. Any valid token. |
+| `POST`   | `/attachments/{sha256}/complete`                  | Confirm the upload. Checks the size and, below `attachments.hash_verify_max_bytes`, re-hashes the bytes; a mismatch is `422`. |
+| `GET`    | `/attachments/{sha256}`                           | `302` to a presigned, time-limited download. Open to everyone once a public record references the object. |
+| `HEAD`   | `/attachments/{sha256}`                           | Size and media type, same authorisation.                                    |
+| `POST`   | `/{cards\|evals}/{ns}/{name}@{seq}/relations`     | Add an edge: `{ type, to, attrs }`, where `to` is `{ns}/{name}@{seq}`, `external:<url>` or `hf:<repo>@<sha>`. |
+| `GET`    | `/{cards\|evals}/{ns}/{name}[@…]/relations`       | Walk the graph: `direction=out\|in\|both`, `depth=1..5`, `types=`, `follow_latest=`. Returns `{ nodes, edges }`. |
+| `GET`    | `/evals/{ns}/{name}[@…]/cards`                    | The comparison view: Cards measured on this Eval, with their fingerprints and `same_harness` / `same_model`. `group_by=fingerprint.{facet}` groups them. |
+
+The hub never carries attachment bytes: uploads and downloads are
+presigned URLs straight to the object store, and the hub records only the
+sha256. A deployment without `s3.endpoint` and its credentials answers
+`503` on these four routes and works normally otherwise.
+
+A node the caller may not see appears as `{ private: true, version_id,
+content_hash }`: enough to know the edge is pinned to an exact version,
+not enough to learn what it is. That is what lets a public Card cite a
+private Eval. The comparison view lines Cards up and labels which axes
+agree; it does not rank them.
+
+The query language, the registry and the web UI are the remaining
+milestones (see the `evalhub_server` crate doc, "Build order").
 
 ## License
 

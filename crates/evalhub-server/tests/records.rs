@@ -1,102 +1,22 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-//! The walking skeleton, end to end: a token-holding caller posts a Card
-//! and an Eval, reads them back, and a re-post of the same body is
-//! idempotent. Needs Docker (Postgres via testcontainers).
+//! The record path end to end: post, read, re-post, validate, label,
+//! tombstone, list. Needs Docker (Postgres via testcontainers).
 
-use std::sync::Arc;
+mod common;
 
-use axum::body::{Body, to_bytes};
-use axum::http::{Method, Request, StatusCode, header};
+use axum::http::{Method, StatusCode};
 use serde_json::{Value, json};
-use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::runners::AsyncRunner;
-use testcontainers_modules::testcontainers::{ContainerAsync, ImageExt};
-use tower::ServiceExt;
 
-use evalhub_server::api::router;
-use evalhub_server::config::Config;
-use evalhub_store::PgPool;
+use common::{CARD, EVAL, Hub, with_title};
 use evalhub_store::auth::Scope;
-
-const CARD: &str = include_str!("../../evalhub-schema/fixtures/card-complete.json");
-const EVAL: &str = include_str!("../../evalhub-schema/fixtures/eval-run-set.json");
-
-struct Hub {
-    _container: ContainerAsync<Postgres>,
-    pool: PgPool,
-    app: axum::Router,
-}
-
-impl Hub {
-    async fn start() -> Self {
-        let container = Postgres::default()
-            .with_tag("16")
-            .start()
-            .await
-            .expect("start postgres");
-        let port = container.get_host_port_ipv4(5432).await.expect("port");
-        let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
-        let pool = evalhub_store::pool::connect(&url, 4)
-            .await
-            .expect("connect");
-        evalhub_store::pool::migrate(&pool).await.expect("migrate");
-        let app = router(Arc::new(Config::default()), Some(pool.clone()));
-        Self {
-            _container: container,
-            pool,
-            app,
-        }
-    }
-
-    /// A user with a personal namespace and a token of `scope`; returns the secret.
-    async fn user(&self, login: &str, scope: Scope) -> String {
-        let user_id = evalhub_store::auth::create_user(&self.pool, login)
-            .await
-            .expect("create user");
-        let (secret, hash) = evalhub_server::auth::new_secret();
-        evalhub_store::auth::create_token(&self.pool, user_id, scope, &[login.to_string()], &hash)
-            .await
-            .expect("create token");
-        secret
-    }
-
-    async fn call(
-        &self,
-        method: Method,
-        path: &str,
-        token: Option<&str>,
-        body: Option<&str>,
-    ) -> (StatusCode, Value) {
-        let mut req = Request::builder().method(method).uri(path);
-        if let Some(t) = token {
-            req = req.header(header::AUTHORIZATION, format!("Bearer {t}"));
-        }
-        let req = match body {
-            Some(b) => req
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(b.to_string())),
-            None => req.body(Body::empty()),
-        }
-        .unwrap();
-        let res = self.app.clone().oneshot(req).await.unwrap();
-        let status = res.status();
-        let bytes = to_bytes(res.into_body(), 1 << 20).await.unwrap();
-        let json = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
-        (status, json)
-    }
-}
-
-fn with_title(record: &str, title: &str) -> String {
-    let mut v: Value = serde_json::from_str(record).unwrap();
-    v["title"] = json!(title);
-    v.to_string()
-}
 
 #[tokio::test]
 async fn card_post_get_and_idempotent_repost() {
     let hub = Hub::start().await;
     let alice = hub.user("alice", Scope::Write).await;
+    hub.ready_attachments(CARD).await;
+    hub.ready_attachments(EVAL).await;
 
     let (status, created) = hub
         .call(
@@ -203,6 +123,8 @@ async fn card_post_get_and_idempotent_repost() {
 async fn eval_post_and_get() {
     let hub = Hub::start().await;
     let alice = hub.user("alice", Scope::Write).await;
+    hub.ready_attachments(CARD).await;
+    hub.ready_attachments(EVAL).await;
     let (status, created) = hub
         .call(
             Method::POST,
@@ -241,8 +163,32 @@ async fn eval_post_and_get() {
 async fn auth_and_visibility() {
     let hub = Hub::start().await;
     let alice = hub.user("alice", Scope::Write).await;
+    hub.ready_attachments(CARD).await;
+    hub.ready_attachments(EVAL).await;
     let bob = hub.user("bob", Scope::Write).await;
-    let reader = {
+    // A read-scoped token of alice's own: may read her private records,
+    // may not write.
+    let alice_ro = {
+        let (user_id, _) = evalhub_store::auth::user_by_login(&hub.pool, "alice")
+            .await
+            .unwrap()
+            .unwrap();
+        let (secret, hash) = evalhub_server::auth::new_secret();
+        evalhub_store::auth::create_token(
+            &hub.pool,
+            user_id,
+            Scope::Read,
+            &["alice".to_string()],
+            &hash,
+        )
+        .await
+        .unwrap();
+        secret
+    };
+    // Carol's token names alice's namespace, which is not carol's and is
+    // not an organisation she belongs to. It grants nothing there: a
+    // personal namespace answers only to its owner.
+    let intruder = {
         let user_id = evalhub_store::auth::create_user(&hub.pool, "carol")
             .await
             .unwrap();
@@ -286,7 +232,7 @@ async fn auth_and_visibility() {
         .call(
             Method::POST,
             "/api/v1/cards/alice/x",
-            Some(&reader),
+            Some(&alice_ro),
             Some(CARD),
         )
         .await;
@@ -327,9 +273,23 @@ async fn auth_and_visibility() {
         .await;
     assert_eq!(status, StatusCode::OK);
     let (status, _) = hub
-        .call(Method::GET, "/api/v1/cards/alice/x", Some(&reader), None)
+        .call(Method::GET, "/api/v1/cards/alice/x", Some(&alice_ro), None)
         .await;
     assert_eq!(status, StatusCode::OK);
+    // Carol's token lists alice's namespace but is not alice's: nothing.
+    let (status, _) = hub
+        .call(Method::GET, "/api/v1/cards/alice/x", Some(&intruder), None)
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = hub
+        .call(
+            Method::POST,
+            "/api/v1/cards/alice/x",
+            Some(&intruder),
+            Some(CARD),
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
 
     // whoami reflects the token.
     let (status, who) = hub
@@ -345,6 +305,8 @@ async fn auth_and_visibility() {
 async fn shape_errors_and_labels() {
     let hub = Hub::start().await;
     let alice = hub.user("alice", Scope::Write).await;
+    hub.ready_attachments(CARD).await;
+    hub.ready_attachments(EVAL).await;
 
     let mut v: Value = serde_json::from_str(CARD).unwrap();
     v["surprise"] = json!(1);
@@ -370,7 +332,7 @@ async fn shape_errors_and_labels() {
         )
         .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(err["errors"][0]["path"], "schema");
+    assert_eq!(err["errors"][0]["path"], "/schema");
 
     let (status, _) = hub
         .call(

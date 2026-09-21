@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT version_id FROM versions\n         WHERE record_id = $1 AND tombstoned_at IS NULL\n         ORDER BY seq DESC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "version_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "versions",
+            "name": "version_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "23a68faf97bd03851f0ff3d562cbd1b80b3793fc3234a4ccb647936ae8098579"
+}

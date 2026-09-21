@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO attachments (sha256, size, media_type)\n         VALUES ($1, $2, $3)\n         ON CONFLICT (sha256) DO UPDATE\n           SET size = CASE WHEN attachments.state = 'pending' THEN EXCLUDED.size ELSE attachments.size END,\n               media_type = CASE WHEN attachments.state = 'pending'\n                                 THEN COALESCE(EXCLUDED.media_type, attachments.media_type)\n                                 ELSE attachments.media_type END\n         RETURNING state",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "state",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attachments",
+            "name": "state"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "9b1fa02e3dcb5a2e49340df7d07232c6d8aaf9fec9a8cd1ca76684b7e5c3d33c"
+}

@@ -1,0 +1,14 @@
+{
+  "schema": "evalhub.card/1.0",
+  "title": "bare metric id, malformed relation type and targets",
+  "producer": {"name": "h", "version": "1"},
+  "results": [{"metric": "pass_rate", "value": 0.5, "aggregation": "mean"}],
+  "counts": {"attempted": 1},
+  "relations": [
+    {"type": "core/uses_eval", "to": "alice/single2-k4@3"},
+    {"type": "uses_eval", "to": "alice/single2-k4"},
+    {"type": "core/uses_eval", "to": "external:"},
+    {"type": "core/uses_eval", "to": "hf:org/repo@sha"},
+    {"type": "core/uses_eval", "to": "alice/x@0"}
+  ]
+}

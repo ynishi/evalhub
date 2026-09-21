@@ -1,0 +1,43 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT v.version_id, r.type AS record_type\n         FROM versions v JOIN records r ON r.id = v.record_id\n         WHERE r.ns = $1 AND r.name = $2 AND v.seq = $3\n           AND ($4::text IS NULL OR r.type = $4)\n         ORDER BY r.type",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "version_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "versions",
+            "name": "version_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "record_type",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "records",
+            "name": "type"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Int4",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "8ef4081acc2fd5f8d0e28fe71a8e4ea2183cbc468f8a1f3b3868c9dd330ee875"
+}

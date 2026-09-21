@@ -3,6 +3,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand};
@@ -190,6 +191,33 @@ async fn connect(loaded: &Loaded) -> anyhow::Result<Option<evalhub_store::PgPool
     Ok(Some(pool))
 }
 
+/// Build the object store when `s3.endpoint` and both credentials are
+/// configured. Anything less leaves attachments unavailable rather than
+/// half-configured, and says so once at start-up.
+fn object_store(loaded: &Loaded) -> anyhow::Result<Option<Arc<evalhub_store::objects::Objects>>> {
+    let s3 = &loaded.config.s3;
+    let (Some(endpoint), Some(access_key), Some(secret_key)) =
+        (&s3.endpoint, &s3.access_key, &s3.secret_key)
+    else {
+        warn!("no object storage configured; the attachment endpoints answer 503");
+        return Ok(None);
+    };
+    let objects = evalhub_store::objects::Objects::new(evalhub_store::objects::ObjectConfig {
+        endpoint: endpoint.clone(),
+        public_endpoint: s3.public_endpoint.clone(),
+        bucket: s3.bucket.clone(),
+        access_key: access_key.expose_secret().to_string(),
+        secret_key: secret_key.expose_secret().to_string(),
+        region: s3.region.clone(),
+        path_style: s3.path_style,
+        allow_http: s3.allow_http,
+        presign_ttl: Duration::from_secs(s3.presign_ttl_secs),
+    })
+    .context("building the object store client")?;
+    info!(bucket = %s3.bucket, "object storage configured");
+    Ok(Some(Arc::new(objects)))
+}
+
 async fn serve(loaded: Loaded) -> anyhow::Result<()> {
     // The record API needs a database; a server without one has nothing
     // to serve but its own health, so it refuses to start.
@@ -202,16 +230,35 @@ async fn serve(loaded: Loaded) -> anyhow::Result<()> {
     }
     info!("database connected, schema current");
 
+    let objects = object_store(&loaded)?;
+    // The garbage collector sweeps every hour; the grace period is what
+    // keeps it from collecting an upload that is ready but not yet
+    // referenced by the record being written.
+    let gc = objects.as_ref().map(|objects| {
+        evalhub_server::jobs::spawn_attachment_gc(
+            pool.clone(),
+            objects.clone(),
+            Duration::from_secs(loaded.config.jobs.gc_grace_secs),
+            Duration::from_secs(60 * 60),
+        )
+    });
+
     let bind = loaded.config.bind.clone();
-    let app = evalhub_server::api::router(Arc::new(loaded.config), Some(pool));
+    let app = evalhub_server::api::router(Arc::new(loaded.config), Some(pool), objects);
     let listener = TcpListener::bind(&bind)
         .await
         .with_context(|| format!("binding {bind}"))?;
     info!(%bind, "evalhub listening");
-    axum::serve(listener, app)
+    let result = axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await
-        .context("serving")?;
+        .context("serving");
+    // The sweep is idempotent, so cutting it at an await point costs
+    // nothing; the next start picks up whatever was left.
+    if let Some(gc) = gc {
+        gc.abort();
+    }
+    result?;
     info!("evalhub stopped");
     Ok(())
 }

@@ -1,32 +1,10 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT r.id AS record_id, r.visibility,\n                v.version_id, v.seq, v.label, v.content_hash, v.body, v.created_at, v.changed, v.badges\n         FROM records r\n         JOIN versions v ON v.record_id = r.id\n         WHERE r.type = $1 AND r.ns = $2 AND r.name = $3 AND v.seq = $4\n           AND (r.visibility = 'public' OR r.ns = ANY($5))",
+  "query": "UPDATE versions\n         SET tombstoned_at = now(), tombstone_reason = $3, tombstone_note = $4, body = NULL\n         WHERE record_id = $1 AND seq = $2 AND tombstoned_at IS NULL\n         RETURNING version_id, seq, label, content_hash, created_at, changed, badges",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "record_id",
-        "type_info": "Uuid",
-        "origin": {
-          "Table": {
-            "table": "records",
-            "name": "id"
-          }
-        }
-      },
-      {
-        "ordinal": 1,
-        "name": "visibility",
-        "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "records",
-            "name": "visibility"
-          }
-        }
-      },
-      {
-        "ordinal": 2,
         "name": "version_id",
         "type_info": "Uuid",
         "origin": {
@@ -37,7 +15,7 @@
         }
       },
       {
-        "ordinal": 3,
+        "ordinal": 1,
         "name": "seq",
         "type_info": "Int4",
         "origin": {
@@ -48,7 +26,7 @@
         }
       },
       {
-        "ordinal": 4,
+        "ordinal": 2,
         "name": "label",
         "type_info": "Text",
         "origin": {
@@ -59,7 +37,7 @@
         }
       },
       {
-        "ordinal": 5,
+        "ordinal": 3,
         "name": "content_hash",
         "type_info": "Bytea",
         "origin": {
@@ -70,18 +48,7 @@
         }
       },
       {
-        "ordinal": 6,
-        "name": "body",
-        "type_info": "Jsonb",
-        "origin": {
-          "Table": {
-            "table": "versions",
-            "name": "body"
-          }
-        }
-      },
-      {
-        "ordinal": 7,
+        "ordinal": 4,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -92,7 +59,7 @@
         }
       },
       {
-        "ordinal": 8,
+        "ordinal": 5,
         "name": "changed",
         "type_info": "TextArray",
         "origin": {
@@ -103,7 +70,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 6,
         "name": "badges",
         "type_info": "TextArray",
         "origin": {
@@ -116,25 +83,21 @@
     ],
     "parameters": {
       "Left": [
-        "Text",
-        "Text",
-        "Text",
+        "Uuid",
         "Int4",
-        "TextArray"
+        "Text",
+        "Text"
       ]
     },
     "nullable": [
       false,
       false,
-      false,
-      false,
       true,
       false,
-      true,
       false,
       false,
       false
     ]
   },
-  "hash": "13cf7e6d2e4e17ba07eb8c249715d7c7719d68dab98cd2fd9ae34a38c1bfbcbe"
+  "hash": "95306a33e2691caac445dde98f8bfdcccdc6587ca4c5b14bde7d9905e9e86f9a"
 }

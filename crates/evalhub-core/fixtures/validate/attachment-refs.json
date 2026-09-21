@@ -1,0 +1,17 @@
+{
+  "schema": "evalhub.card/1.0",
+  "title": "bad attachment paths and dangling references",
+  "producer": {"name": "h", "version": "1"},
+  "results": [
+    {"metric": "core/pass_rate", "value": 0.5, "aggregation": "mean", "samples_ref": "samples.jsonl"},
+    {"metric": "core/accuracy", "value": 0.5, "aggregation": "mean", "samples_ref": "missing.jsonl"}
+  ],
+  "counts": {"attempted": 1},
+  "attachments": [
+    {"path": "samples.jsonl", "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "size": 1},
+    {"path": "samples.jsonl", "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "size": 1},
+    {"path": "/abs.txt", "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "size": 1},
+    {"path": "a/../b.txt", "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "size": 1},
+    {"path": "", "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "size": 1}
+  ]
+}

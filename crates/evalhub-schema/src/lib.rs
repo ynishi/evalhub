@@ -122,6 +122,54 @@ pub const EVAL_SCHEMA: &str = "evalhub.eval/1.0";
 /// (`GET /schemas/{name}`), in the order [`all_schemas`] returns them.
 pub const SCHEMA_NAMES: [&str; 4] = ["card", "eval", "error", "query"];
 
+/// The two record kinds, as they appear in URLs (`/cards`, `/evals`) and in
+/// the `type` column of the store. Everything that differs between a Card
+/// and an Eval (its schema, its facets, its semantic rules) is keyed on this.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum RecordKind {
+    /// A Card: what was measured, how, and what the score was.
+    Card,
+    /// An Eval: the material a Card was measured from.
+    Eval,
+}
+
+impl RecordKind {
+    /// The `schema` identifier a record of this kind must declare.
+    pub const fn schema_id(self) -> &'static str {
+        match self {
+            RecordKind::Card => CARD_SCHEMA,
+            RecordKind::Eval => EVAL_SCHEMA,
+        }
+    }
+
+    /// The generated JSON Schema for this kind.
+    pub fn schema(self) -> schemars::Schema {
+        match self {
+            RecordKind::Card => schema_for_card(),
+            RecordKind::Eval => schema_for_eval(),
+        }
+    }
+
+    /// The short name: `card` or `eval`.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            RecordKind::Card => "card",
+            RecordKind::Eval => "eval",
+        }
+    }
+}
+
 /// Generator settings shared by every schema: JSON Schema draft 2020-12, the
 /// dialect OpenAPI 3.1 uses, so the served files and `openapi.json` agree.
 fn generator() -> schemars::SchemaGenerator {

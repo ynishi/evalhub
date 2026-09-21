@@ -22,13 +22,16 @@
 //! bind            = "127.0.0.1:8080"
 //! database.url    = "postgres://…"            secret; optional until the record API lands
 //! database.max_connections = 8
-//! s3.endpoint     = "http://…"
-//! s3.bucket       = "evalhub"
+//! s3.endpoint     = "http://…"                 what the server talks to
+//! s3.public_endpoint =                         what clients reach for presigned URLs; defaults to endpoint
+//! s3.bucket       = "evalhub"                  must exist; the hub does not create it
+//! s3.region       = "us-east-1"
 //! s3.access_key   =                            secret
 //! s3.secret_key   =                            secret
 //! s3.path_style   = true
+//! s3.allow_http   = false                      presigning over plain http (local MinIO)
 //! s3.presign_ttl_secs = 900
-//! auth.cursor_key =                            secret, HMAC key for cursors
+//! auth.cursor_key =                            secret, HMAC key for cursors; random per process if unset
 //! auth.cookie_key =                            secret, private-cookie key for the UI
 //! attachments.hash_verify_max_bytes = 268435456
 //! jobs.gc_grace_secs = 86400
@@ -84,16 +87,24 @@ pub struct Database {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct S3 {
-    /// Endpoint URL of the S3-compatible service.
+    /// Endpoint URL of the S3-compatible service, as the server reaches it.
     pub endpoint: Option<String>,
-    /// Bucket that holds attachments.
+    /// Endpoint clients reach. Presigned URLs are signed against this host
+    /// (SigV4 covers `Host`), so it must be the one a browser or harness
+    /// can open. Defaults to `endpoint`.
+    pub public_endpoint: Option<String>,
+    /// Bucket that holds attachments. Must exist; the hub never creates it.
     pub bucket: String,
+    /// Region name used in signatures. Most S3-compatible stores accept any.
+    pub region: String,
     /// Access key. Secret.
     pub access_key: Option<SecretString>,
     /// Secret key. Secret.
     pub secret_key: Option<SecretString>,
     /// Use path-style addressing (required by MinIO, harmless elsewhere).
     pub path_style: bool,
+    /// Allow a plain-`http` endpoint (local MinIO). Off by default.
+    pub allow_http: bool,
     /// Lifetime of presigned URLs, in seconds.
     pub presign_ttl_secs: u64,
 }
@@ -169,10 +180,13 @@ impl Default for S3 {
     fn default() -> Self {
         Self {
             endpoint: None,
+            public_endpoint: None,
             bucket: "evalhub".into(),
+            region: "us-east-1".into(),
             access_key: None,
             secret_key: None,
             path_style: true,
+            allow_http: false,
             presign_ttl_secs: 900,
         }
     }
@@ -317,10 +331,13 @@ impl Loaded {
                 c.database.max_connections.to_string(),
             ),
             ("s3.endpoint", opt(&c.s3.endpoint)),
+            ("s3.public_endpoint", opt(&c.s3.public_endpoint)),
             ("s3.bucket", c.s3.bucket.clone()),
+            ("s3.region", c.s3.region.clone()),
             ("s3.access_key", secret(&c.s3.access_key)),
             ("s3.secret_key", secret(&c.s3.secret_key)),
             ("s3.path_style", c.s3.path_style.to_string()),
+            ("s3.allow_http", c.s3.allow_http.to_string()),
             ("s3.presign_ttl_secs", c.s3.presign_ttl_secs.to_string()),
             ("auth.cursor_key", secret(&c.auth.cursor_key)),
             ("auth.cookie_key", secret(&c.auth.cookie_key)),

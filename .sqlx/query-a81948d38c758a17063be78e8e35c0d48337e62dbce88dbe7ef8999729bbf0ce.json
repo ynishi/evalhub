@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE attachments SET state = 'ready', hashed_by_hub = $2 WHERE sha256 = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a81948d38c758a17063be78e8e35c0d48337e62dbce88dbe7ef8999729bbf0ce"
+}

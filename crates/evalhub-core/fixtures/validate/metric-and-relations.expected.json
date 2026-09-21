@@ -1,0 +1,7 @@
+[
+  {"path": "/relations/1/to", "code": "schema"},
+  {"path": "/relations/1/type", "code": "schema"},
+  {"path": "/relations/2/to", "code": "schema"},
+  {"path": "/relations/4/to", "code": "schema"},
+  {"path": "/results/0/metric", "code": "metric_id_invalid"}
+]

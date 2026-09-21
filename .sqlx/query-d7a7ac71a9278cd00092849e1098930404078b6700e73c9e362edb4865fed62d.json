@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT rel.from_version_id\n         FROM relations rel\n         WHERE rel.type = $3 AND (rel.to_version_id = $1 OR rel.to_external = $2)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "from_version_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "relations",
+            "name": "from_version_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "d7a7ac71a9278cd00092849e1098930404078b6700e73c9e362edb4865fed62d"
+}

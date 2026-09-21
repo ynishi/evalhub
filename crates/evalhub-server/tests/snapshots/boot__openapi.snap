@@ -5,6 +5,308 @@ expression: body
 {
   "components": {
     "schemas": {
+      "AnnounceBody": {
+        "additionalProperties": false,
+        "description": "Body of `POST /attachments`.",
+        "properties": {
+          "media_type": {
+            "description": "Media type hint, for display and download. Not interpreted.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sha256": {
+            "description": "sha256 of the bytes, 64 lower-case hexadecimal characters. This is\nthe object's only name.",
+            "type": "string"
+          },
+          "size": {
+            "description": "Size of the bytes. `complete` refuses an object of another size.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sha256",
+          "size"
+        ],
+        "type": "object"
+      },
+      "AuditEntry": {
+        "description": "One entry of the log.",
+        "properties": {
+          "action": {
+            "description": "What happened, such as `version.append` or `org.member.add`.",
+            "type": "string"
+          },
+          "actor": {
+            "description": "Login of the user behind the action, if there was one.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "at": {
+            "description": "When it happened.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "detail": {
+            "description": "Action-specific facts."
+          },
+          "ns": {
+            "description": "The namespace the action concerns.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "subject": {
+            "description": "What it happened to, such as `card/alice/single2@3`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "token_id": {
+            "description": "Identifier of the token presented, if one was.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "at",
+          "action"
+        ],
+        "type": "object"
+      },
+      "AuditQuery": {
+        "description": "Query string of `GET /audit`.",
+        "properties": {
+          "cursor": {
+            "description": "Cursor from a previous page's `next_cursor`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "limit": {
+            "description": "Page size, 1–200; default 50.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "ns": {
+            "description": "Namespace to read the log of. The caller needs `admin` on it.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ns"
+        ],
+        "type": "object"
+      },
+      "ComparisonDto": {
+        "description": "The comparison view: Cards measured on one Eval version.",
+        "properties": {
+          "groups": {
+            "description": "The Cards grouped by the requested facet fingerprint.",
+            "items": {
+              "$ref": "#/components/schemas/ComparisonGroupDto"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "items": {
+            "description": "Every Card, when `group_by` was not given.",
+            "items": {
+              "$ref": "#/components/schemas/ComparisonRowDto"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ComparisonGroupDto": {
+        "description": "Cards sharing one fingerprint of the facet named in `group_by`.",
+        "properties": {
+          "items": {
+            "description": "The Cards in the group.",
+            "items": {
+              "$ref": "#/components/schemas/ComparisonRowDto"
+            },
+            "type": "array"
+          },
+          "key": {
+            "description": "The shared fingerprint in hex, or `null` for Cards with none.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "ComparisonQuery": {
+        "description": "Query string of the comparison view.",
+        "properties": {
+          "group_by": {
+            "description": "`fingerprint.{facet}` for one of the seven facets. Groups the\nCards by that fingerprint; omitted, the list is flat.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ComparisonRowDto": {
+        "description": "One Card in the comparison view.",
+        "properties": {
+          "content_hash": {
+            "description": "sha256 of the canonical body.",
+            "type": "string"
+          },
+          "fingerprints": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Per-facet fingerprints, hex, keyed by facet name.",
+            "type": "object"
+          },
+          "name": {
+            "description": "Record name.",
+            "type": "string"
+          },
+          "ns": {
+            "description": "Namespace.",
+            "type": "string"
+          },
+          "same_harness": {
+            "description": "The Card's harness fingerprint equals the Eval's.",
+            "type": "boolean"
+          },
+          "same_model": {
+            "description": "The Card's model fingerprint equals the Eval's.",
+            "type": "boolean"
+          },
+          "seq": {
+            "description": "Sequence number of that version.",
+            "format": "int32",
+            "type": "integer"
+          },
+          "title": {
+            "description": "The record's title.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version_id": {
+            "description": "The Card's latest live version.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version_id",
+          "ns",
+          "name",
+          "seq",
+          "content_hash",
+          "fingerprints",
+          "same_harness",
+          "same_model"
+        ],
+        "type": "object"
+      },
+      "CompletedDto": {
+        "description": "Response of `POST /attachments/{sha256}/complete`.",
+        "properties": {
+          "hashed_by_hub": {
+            "description": "Whether the hub re-hashed the bytes. `false` means the object was\nabove `attachments.hash_verify_max_bytes` and the client's sha256\nwas taken on trust; the record says which.",
+            "type": "boolean"
+          },
+          "size": {
+            "description": "Size of the object as the store reports it.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "size",
+          "hashed_by_hub"
+        ],
+        "type": "object"
+      },
+      "DirectionParam": {
+        "description": "Which edges a traversal follows.",
+        "oneOf": [
+          {
+            "const": "out",
+            "description": "Edges leaving the node.",
+            "type": "string"
+          },
+          {
+            "const": "in",
+            "description": "Edges entering the node.",
+            "type": "string"
+          },
+          {
+            "const": "both",
+            "description": "Both.",
+            "type": "string"
+          }
+        ]
+      },
+      "EdgeDto": {
+        "description": "An edge of the relation graph.",
+        "properties": {
+          "attrs": {
+            "description": "Free-form attributes."
+          },
+          "from": {
+            "description": "Version the edge leaves.",
+            "type": "string"
+          },
+          "to": {
+            "description": "Version it points at, when the target is on this hub.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "to_text": {
+            "description": "Textual target, for an unresolved or external reference.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "type": {
+            "description": "Registry id of the relation type.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "type"
+        ],
+        "type": "object"
+      },
       "ErrorCode": {
         "description": "The closed set of error codes.",
         "oneOf": [
@@ -67,6 +369,11 @@ expression: body
             "const": "label_in_use",
             "description": "The requested `@{label}` already names another version.",
             "type": "string"
+          },
+          {
+            "const": "namespace_in_use",
+            "description": "The requested organisation slug is already a user or an organisation.",
+            "type": "string"
           }
         ]
       },
@@ -117,6 +424,43 @@ expression: body
         ],
         "type": "object"
       },
+      "GetQuery": {
+        "description": "Query string of `GET …/{name}`.",
+        "properties": {
+          "expand": {
+            "description": "Comma-separated: `fingerprints`, `badges`, `changed`, `relations`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "GraphDto": {
+        "description": "What a traversal found.",
+        "properties": {
+          "edges": {
+            "description": "Every edge followed.",
+            "items": {
+              "$ref": "#/components/schemas/EdgeDto"
+            },
+            "type": "array"
+          },
+          "nodes": {
+            "description": "Every version reached, the start first.",
+            "items": {
+              "$ref": "#/components/schemas/NodeDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "nodes",
+          "edges"
+        ],
+        "type": "object"
+      },
       "Health": {
         "description": "`GET /api/v1/healthz`",
         "properties": {
@@ -132,6 +476,424 @@ expression: body
         "required": [
           "status",
           "database"
+        ],
+        "type": "object"
+      },
+      "Items_for_MemberDto": {
+        "description": "A list of things, without paging: these are all small.\n\nThe schema name carries the item type, so a generated client gets one\nlist type per item type instead of `Items` and `Items2`.",
+        "properties": {
+          "items": {
+            "description": "The items.",
+            "items": {
+              "$ref": "#/components/schemas/MemberDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "Items_for_TokenDto": {
+        "description": "A list of things, without paging: these are all small.\n\nThe schema name carries the item type, so a generated client gets one\nlist type per item type instead of `Items` and `Items2`.",
+        "properties": {
+          "items": {
+            "description": "The items.",
+            "items": {
+              "$ref": "#/components/schemas/TokenDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "LabelBody": {
+        "description": "Body of `PATCH …/{name}@{seq}/label`.",
+        "properties": {
+          "label": {
+            "description": "The label to point at this version. Moved if it named another.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label"
+        ],
+        "type": "object"
+      },
+      "ListItem": {
+        "description": "One row of `GET /{cards|evals}`.",
+        "properties": {
+          "created_at": {
+            "description": "When the name was created.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "latest": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/VersionEnvelope"
+              }
+            ],
+            "description": "The latest live version, without its record."
+          },
+          "name": {
+            "description": "Name of the record.",
+            "type": "string"
+          },
+          "ns": {
+            "description": "Namespace of the record.",
+            "type": "string"
+          },
+          "title": {
+            "description": "`title` of the latest live version.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "visibility": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/VisibilityParam"
+              }
+            ],
+            "description": "`public` or `private`."
+          }
+        },
+        "required": [
+          "ns",
+          "name",
+          "visibility",
+          "created_at",
+          "latest"
+        ],
+        "type": "object"
+      },
+      "ListQuery": {
+        "description": "Query string of `GET /{cards|evals}`.",
+        "properties": {
+          "cursor": {
+            "description": "Cursor from a previous page's `next_cursor`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "limit": {
+            "description": "Page size, 1–200; default 50.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "ns": {
+            "description": "Only records in this namespace.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "search": {
+            "description": "Case-insensitive substring of the name or the latest title.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sort": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SortParam"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Sort order; default `created_desc`."
+          }
+        },
+        "type": "object"
+      },
+      "MemberDto": {
+        "description": "A member of an organisation.",
+        "properties": {
+          "role": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ScopeDto"
+              }
+            ],
+            "description": "Their role in the organisation."
+          },
+          "user": {
+            "description": "The member's login.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user",
+          "role"
+        ],
+        "type": "object"
+      },
+      "NamespaceDto": {
+        "description": "A namespace and what it holds.",
+        "properties": {
+          "cards": {
+            "description": "Cards in it that the caller may see.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "created_at": {
+            "description": "When it was created.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "evals": {
+            "description": "Evals in it that the caller may see.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "kind": {
+            "description": "`user` or `org`.",
+            "type": "string"
+          },
+          "ns": {
+            "description": "The namespace: a user login or an organisation slug.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ns",
+          "kind",
+          "created_at",
+          "cards",
+          "evals"
+        ],
+        "type": "object"
+      },
+      "NewMemberBody": {
+        "additionalProperties": false,
+        "description": "Body of `POST /orgs/{org}/members`.",
+        "properties": {
+          "role": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ScopeDto"
+              }
+            ],
+            "description": "The role they get."
+          },
+          "user": {
+            "description": "Login of the user to add.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user",
+          "role"
+        ],
+        "type": "object"
+      },
+      "NewOrgBody": {
+        "additionalProperties": false,
+        "description": "Body of `POST /orgs`.",
+        "properties": {
+          "ns": {
+            "description": "Slug of the organisation, which is also its namespace.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ns"
+        ],
+        "type": "object"
+      },
+      "NewRelationBody": {
+        "additionalProperties": false,
+        "description": "Body of `POST …/relations`.",
+        "properties": {
+          "attrs": {
+            "description": "Free-form attributes for this relation type."
+          },
+          "to": {
+            "description": "Target: `{ns}/{name}@{seq}`, `external:…` or `hf:…`.",
+            "type": "string"
+          },
+          "type": {
+            "description": "Registry id of the relation type, `{ns}/{name}`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "to"
+        ],
+        "type": "object"
+      },
+      "NewTokenBody": {
+        "additionalProperties": false,
+        "description": "Body of `POST /tokens`.",
+        "properties": {
+          "namespaces": {
+            "description": "Namespaces it covers: the caller's login, and organisations where\nthe caller is `admin`.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "scope": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ScopeDto"
+              }
+            ],
+            "description": "Scope of the new token; may not exceed the presenting token's."
+          }
+        },
+        "required": [
+          "scope",
+          "namespaces"
+        ],
+        "type": "object"
+      },
+      "NodeDto": {
+        "description": "A node of the relation graph.",
+        "properties": {
+          "content_hash": {
+            "description": "sha256 of the canonical body: the commitment, always present.",
+            "type": "string"
+          },
+          "name": {
+            "description": "Record name, when the caller may see it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ns": {
+            "description": "Namespace, when the caller may see the record.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "private": {
+            "description": "`true` on a node the caller may not see; then only `version_id`\nand `content_hash` are present.",
+            "type": "boolean"
+          },
+          "record_type": {
+            "description": "`card` or `eval`, when the caller may see it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "seq": {
+            "description": "Sequence number, when the caller may see it.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "tombstoned": {
+            "description": "Whether the version has been tombstoned, when the caller may see it.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "version_id": {
+            "description": "The version.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version_id",
+          "private",
+          "content_hash"
+        ],
+        "type": "object"
+      },
+      "Page_for_AuditEntry": {
+        "additionalProperties": false,
+        "description": "One page of results.\n\nThe schema name carries the item type (`Page_for_VersionEnvelope`), so a\ngenerated client gets one page type per item type instead of `Page` and\n`Page2`.",
+        "properties": {
+          "items": {
+            "description": "The items on this page.",
+            "items": {
+              "$ref": "#/components/schemas/AuditEntry"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "default": null,
+            "description": "Cursor for the next page, or `null` on the last page.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "Page_for_ListItem": {
+        "additionalProperties": false,
+        "description": "One page of results.\n\nThe schema name carries the item type (`Page_for_VersionEnvelope`), so a\ngenerated client gets one page type per item type instead of `Page` and\n`Page2`.",
+        "properties": {
+          "items": {
+            "description": "The items on this page.",
+            "items": {
+              "$ref": "#/components/schemas/ListItem"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "default": null,
+            "description": "Cursor for the next page, or `null` on the last page.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "Page_for_VersionEnvelope": {
+        "additionalProperties": false,
+        "description": "One page of results.\n\nThe schema name carries the item type (`Page_for_VersionEnvelope`), so a\ngenerated client gets one page type per item type instead of `Page` and\n`Page2`.",
+        "properties": {
+          "items": {
+            "description": "The items on this page.",
+            "items": {
+              "$ref": "#/components/schemas/VersionEnvelope"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "default": null,
+            "description": "Cursor for the next page, or `null` on the last page.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
         ],
         "type": "object"
       },
@@ -152,7 +914,7 @@ expression: body
         "description": "Path of a record: `/{cards|evals}/{ns}/{name}`.",
         "properties": {
           "name": {
-            "description": "Record name, optionally followed by `@{seq}` to address one version.",
+            "description": "Record name, optionally followed by `@{seq}` or `@{label}` to\naddress one version.",
             "type": "string"
           },
           "ns": {
@@ -164,6 +926,249 @@ expression: body
           "ns",
           "name"
         ],
+        "type": "object"
+      },
+      "RelationPath": {
+        "description": "Path of the record an edge leaves or is read from:\n`/{cards|evals}/{ns}/{name}`. Named apart from the records module's\npath type so the two do not collide in the generated schema.",
+        "properties": {
+          "name": {
+            "description": "Record name, optionally followed by `@{seq}` or `@{label}`.",
+            "type": "string"
+          },
+          "ns": {
+            "description": "Namespace: a user login or an organisation slug.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ns",
+          "name"
+        ],
+        "type": "object"
+      },
+      "ScopeDto": {
+        "description": "A scope as it crosses the wire.",
+        "oneOf": [
+          {
+            "const": "read",
+            "description": "Read private records in the token's namespaces.",
+            "type": "string"
+          },
+          {
+            "const": "write",
+            "description": "Also write records, relations, settings and registry entries.",
+            "type": "string"
+          },
+          {
+            "const": "admin",
+            "description": "Also manage organisation members, issue organisation tokens, read audit.",
+            "type": "string"
+          }
+        ]
+      },
+      "Settings": {
+        "description": "Body of `PATCH …/{name}/settings` and its response.",
+        "properties": {
+          "visibility": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/VisibilityParam"
+              }
+            ],
+            "description": "`public` or `private`."
+          }
+        },
+        "required": [
+          "visibility"
+        ],
+        "type": "object"
+      },
+      "SortParam": {
+        "description": "Sort orders of the list endpoints.",
+        "oneOf": [
+          {
+            "const": "created_desc",
+            "description": "Newest record first.",
+            "type": "string"
+          },
+          {
+            "const": "created_asc",
+            "description": "Oldest record first.",
+            "type": "string"
+          },
+          {
+            "const": "name_asc",
+            "description": "By name, ascending.",
+            "type": "string"
+          }
+        ]
+      },
+      "TokenDto": {
+        "description": "One of the caller's tokens. The secret is not here; it was shown once.",
+        "properties": {
+          "created_at": {
+            "description": "When it was issued.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "namespaces": {
+            "description": "Namespaces it covers.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "prefix": {
+            "description": "First eight hex characters of the stored hash, to tell tokens apart.",
+            "type": "string"
+          },
+          "revoked_at": {
+            "description": "When it was revoked, if it was. A revoked token is refused.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scope": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ScopeDto"
+              }
+            ],
+            "description": "What the token may do."
+          },
+          "token_id": {
+            "description": "Identifier of the token, used to revoke it.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token_id",
+          "prefix",
+          "scope",
+          "namespaces",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "TombstoneBody": {
+        "description": "Body of `DELETE …/{name}@{seq}`.",
+        "properties": {
+          "note": {
+            "description": "Free text shown with the tombstone.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TombstoneReasonParam"
+              }
+            ],
+            "description": "Why the version is withdrawn."
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "type": "object"
+      },
+      "TombstoneDto": {
+        "description": "The tombstone of a withdrawn version.",
+        "properties": {
+          "at": {
+            "description": "When it was withdrawn.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "note": {
+            "description": "Free text from the producer, if any.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TombstoneReasonParam"
+              }
+            ],
+            "description": "Why."
+          }
+        },
+        "required": [
+          "at",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "TombstoneReasonParam": {
+        "description": "Why a version was tombstoned.",
+        "oneOf": [
+          {
+            "const": "withdrawn",
+            "description": "The producer withdrew it.",
+            "type": "string"
+          },
+          {
+            "const": "duplicate",
+            "description": "It duplicated another version.",
+            "type": "string"
+          },
+          {
+            "const": "takedown",
+            "description": "Removed following a takedown request.",
+            "type": "string"
+          },
+          {
+            "const": "other",
+            "description": "See the note.",
+            "type": "string"
+          }
+        ]
+      },
+      "TraverseQuery": {
+        "description": "Query string of `GET …/relations`.",
+        "properties": {
+          "depth": {
+            "description": "How many edges from the start, 1–5; default 1.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "direction": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DirectionParam"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`out` (default), `in` or `both`."
+          },
+          "follow_latest": {
+            "description": "Walk from the latest live version of each record instead of the\nversion the edge names.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "types": {
+            "description": "Comma-separated relation type ids to follow; all by default.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
         "type": "object"
       },
       "VersionEnvelope": {
@@ -192,6 +1197,16 @@ expression: body
             "format": "date-time",
             "type": "string"
           },
+          "fingerprints": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Per-facet fingerprints as hex, with `expand=fingerprints`.",
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "id": {
             "description": "Identifier of the named record, stable across versions (ULID).",
             "type": "string"
@@ -204,12 +1219,23 @@ expression: body
             ]
           },
           "record": {
-            "description": "The canonical record. Absent in `POST` responses and for tombstones."
+            "description": "The canonical record. Absent in `POST` responses, in version lists,\nand for tombstones."
           },
           "seq": {
             "description": "Sequence number within the name, from 1, gap-free.",
             "format": "int32",
             "type": "integer"
+          },
+          "tombstone": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TombstoneDto"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Present when the version was withdrawn; `record` is then absent."
           },
           "version_id": {
             "description": "Identifier of this version (ULID). Relations point at these.",
@@ -226,6 +1252,21 @@ expression: body
           "badges"
         ],
         "type": "object"
+      },
+      "VisibilityParam": {
+        "description": "A record's visibility.",
+        "oneOf": [
+          {
+            "const": "public",
+            "description": "Readable by anyone.",
+            "type": "string"
+          },
+          {
+            "const": "private",
+            "description": "Readable only with a token covering the namespace.",
+            "type": "string"
+          }
+        ]
       },
       "Whoami": {
         "description": "`GET /api/v1/whoami`",
@@ -266,18 +1307,394 @@ expression: body
   },
   "openapi": "3.1.0",
   "paths": {
-    "/api/v1/cards/{ns}/{name}": {
+    "/api/v1/attachments": {
+      "post": {
+        "description": "Returns `200 { state: \"ready\" }` when the object is already confirmed, otherwise `201` with a presigned `PUT` URL. The hub never receives the bytes: they go straight to the object store. Any valid token may announce; using the object needs `write` on the record's namespace.",
+        "operationId": "announce_attachment",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnnounceBody"
+              }
+            }
+          },
+          "description": "Body of `POST /attachments`.",
+          "required": true
+        },
+        "responses": {
+          "400": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Failed to parse the request body as JSON"
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "415": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Expected request with `Content-Type: application/json`"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Announce an upload"
+      }
+    },
+    "/api/v1/attachments/{sha256}": {
       "get": {
-        "description": "The latest live version of `{ns}/{name}`, or the version `@{seq}`. Private records are `404` to a caller whose token does not cover `ns`.",
-        "operationId": "get_card",
+        "description": "`302` to a presigned, time-limited URL. Open to everyone when a public record references the object, to the covering token when only private ones do, and to any token while the object is not referenced at all.",
+        "operationId": "download_attachment",
+        "responses": {
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Download an attachment"
+      },
+      "head": {
+        "description": "The same authorisation as the download, without the redirect.",
+        "operationId": "head_attachment",
+        "responses": {
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Size and media type of an attachment"
+      }
+    },
+    "/api/v1/attachments/{sha256}/complete": {
+      "post": {
+        "description": "Checks the object exists with the announced size and, below `attachments.hash_verify_max_bytes`, that its bytes hash to the announced sha256. A mismatch is `422` and the object stays pending.",
+        "operationId": "complete_attachment",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompletedDto"
+                }
+              }
+            },
+            "description": "Response of `POST /attachments/{sha256}/complete`."
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Confirm an upload"
+      }
+    },
+    "/api/v1/audit": {
+      "get": {
+        "description": "Append-only: who changed what, when. Newest first, paged by cursor. Requires `admin` on the namespace.",
+        "operationId": "list_audit",
         "parameters": [
           {
-            "description": "Record name, optionally followed by `@{seq}` to address one version.",
+            "description": "Cursor from a previous page's `next_cursor`.",
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "description": "Cursor from a previous page's `next_cursor`.",
+              "type": "string"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Page size, 1–200; default 50.",
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "description": "Page size, 1–200; default 50.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Namespace to read the log of. The caller needs `admin` on it.",
+            "in": "query",
+            "name": "ns",
+            "required": true,
+            "schema": {
+              "description": "Namespace to read the log of. The caller needs `admin` on it.",
+              "type": "string"
+            },
+            "style": "form"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_for_AuditEntry"
+                }
+              }
+            },
+            "description": "One page of results.\n\nThe schema name carries the item type (`Page_for_VersionEnvelope`), so a\ngenerated client gets one page type per item type instead of `Page` and\n`Page2`."
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Audit log of a namespace"
+      }
+    },
+    "/api/v1/cards": {
+      "get": {
+        "description": "Names with at least one live version, newest first by default. Private records appear only for a caller whose token covers their namespace. Paging is by opaque cursor.",
+        "operationId": "list_cards",
+        "parameters": [
+          {
+            "description": "Cursor from a previous page's `next_cursor`.",
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "description": "Cursor from a previous page's `next_cursor`.",
+              "type": "string"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Page size, 1–200; default 50.",
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "description": "Page size, 1–200; default 50.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Only records in this namespace.",
+            "in": "query",
+            "name": "ns",
+            "schema": {
+              "description": "Only records in this namespace.",
+              "type": "string"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Case-insensitive substring of the name or the latest title.",
+            "in": "query",
+            "name": "search",
+            "schema": {
+              "description": "Case-insensitive substring of the name or the latest title.",
+              "type": "string"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Sort order; default `created_desc`.",
+            "in": "query",
+            "name": "sort",
+            "schema": {
+              "$ref": "#/components/schemas/SortParam",
+              "description": "Sort order; default `created_desc`."
+            },
+            "style": "form"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_for_ListItem"
+                }
+              }
+            },
+            "description": "One page of results.\n\nThe schema name carries the item type (`Page_for_VersionEnvelope`), so a\ngenerated client gets one page type per item type instead of `Page` and\n`Page2`."
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "List cards"
+      }
+    },
+    "/api/v1/cards/{ns}/{name}": {
+      "delete": {
+        "description": "Addresses one version with `@{seq}` and replaces its body with a tombstone carrying a reason. The version id, the content hash and `changed[]` remain, so relations pointing at it still resolve and show what happened.",
+        "operationId": "delete_card",
+        "parameters": [
+          {
+            "description": "Record name, optionally followed by `@{seq}` or `@{label}` to\naddress one version.",
             "in": "path",
             "name": "name",
             "required": true,
             "schema": {
-              "description": "Record name, optionally followed by `@{seq}` to address one version.",
+              "description": "Record name, optionally followed by `@{seq}` or `@{label}` to\naddress one version.",
               "type": "string"
             },
             "style": "simple"
@@ -292,6 +1709,117 @@ expression: body
               "type": "string"
             },
             "style": "simple"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TombstoneBody"
+              }
+            }
+          },
+          "description": "Body of `DELETE …/{name}@{seq}`.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionEnvelope"
+                }
+              }
+            },
+            "description": "What the hub adds around a stored version."
+          },
+          "400": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Failed to parse the request body as JSON"
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "415": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Expected request with `Content-Type: application/json`"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Tombstone Card version"
+      },
+      "get": {
+        "description": "The latest live version of `{ns}/{name}`, or the version `@{seq}`. Private records are `404` to a caller whose token does not cover `ns`.",
+        "operationId": "get_card",
+        "parameters": [
+          {
+            "description": "Record name, optionally followed by `@{seq}` or `@{label}` to\naddress one version.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Record name, optionally followed by `@{seq}` or `@{label}` to\naddress one version.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "Namespace: a user login or an organisation slug.",
+            "in": "path",
+            "name": "ns",
+            "required": true,
+            "schema": {
+              "description": "Namespace: a user login or an organisation slug.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "Comma-separated: `fingerprints`, `badges`, `changed`, `relations`.",
+            "in": "query",
+            "name": "expand",
+            "schema": {
+              "description": "Comma-separated: `fingerprints`, `badges`, `changed`, `relations`.",
+              "type": "string"
+            },
+            "style": "form"
           }
         ],
         "responses": {
@@ -335,19 +1863,19 @@ expression: body
             "description": "The record is invalid; every violation is listed."
           }
         },
-        "summary": "Read a Card version"
+        "summary": "Read Card version"
       },
       "post": {
         "description": "Validates the body, canonicalises it and stores it as the next version of `{ns}/{name}`, creating the name if needed. Requires a token with `write` on `ns`. If the canonical body equals the latest version's, that version is returned with `200` and nothing is written.",
         "operationId": "post_card",
         "parameters": [
           {
-            "description": "Record name, optionally followed by `@{seq}` to address one version.",
+            "description": "Record name, optionally followed by `@{seq}` or `@{label}` to\naddress one version.",
             "in": "path",
             "name": "name",
             "required": true,
             "schema": {
-              "description": "Record name, optionally followed by `@{seq}` to address one version.",
+              "description": "Record name, optionally followed by `@{seq}` or `@{label}` to\naddress one version.",
               "type": "string"
             },
             "style": "simple"
@@ -453,21 +1981,21 @@ expression: body
             "description": "The record is invalid; every violation is listed."
           }
         },
-        "summary": "Append a Card version"
+        "summary": "Append Card version"
       }
     },
-    "/api/v1/evals/{ns}/{name}": {
-      "get": {
-        "description": "The latest live version of `{ns}/{name}`, or the version `@{seq}`. Private records are `404` to a caller whose token does not cover `ns`.",
-        "operationId": "get_eval",
+    "/api/v1/cards/{ns}/{name}/label": {
+      "patch": {
+        "description": "Addresses the target version with `@{seq}`. A label is unique within the name and never purely numeric; re-pointing moves it off whichever version held it.",
+        "operationId": "label_card",
         "parameters": [
           {
-            "description": "Record name, optionally followed by `@{seq}` to address one version.",
+            "description": "Record name, optionally followed by `@{seq}` or `@{label}` to\naddress one version.",
             "in": "path",
             "name": "name",
             "required": true,
             "schema": {
-              "description": "Record name, optionally followed by `@{seq}` to address one version.",
+              "description": "Record name, optionally followed by `@{seq}` or `@{label}` to\naddress one version.",
               "type": "string"
             },
             "style": "simple"
@@ -482,6 +2010,702 @@ expression: body
               "type": "string"
             },
             "style": "simple"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LabelBody"
+              }
+            }
+          },
+          "description": "Body of `PATCH …/{name}@{seq}/label`.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionEnvelope"
+                }
+              }
+            },
+            "description": "What the hub adds around a stored version."
+          },
+          "400": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Failed to parse the request body as JSON"
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "415": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Expected request with `Content-Type: application/json`"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Point a label at a version"
+      }
+    },
+    "/api/v1/cards/{ns}/{name}/relations": {
+      "get": {
+        "description": "Breadth-first from the addressed version. `direction` is `out` (default), `in` or `both`; `depth` is 1–5; `types` filters by relation type. Endpoints the caller may not see are reduced to their version id and content hash.",
+        "operationId": "card_relations",
+        "parameters": [
+          {
+            "description": "Record name, optionally followed by `@{seq}` or `@{label}`.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Record name, optionally followed by `@{seq}` or `@{label}`.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "Namespace: a user login or an organisation slug.",
+            "in": "path",
+            "name": "ns",
+            "required": true,
+            "schema": {
+              "description": "Namespace: a user login or an organisation slug.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "How many edges from the start, 1–5; default 1.",
+            "in": "query",
+            "name": "depth",
+            "schema": {
+              "description": "How many edges from the start, 1–5; default 1.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "style": "form"
+          },
+          {
+            "description": "`out` (default), `in` or `both`.",
+            "in": "query",
+            "name": "direction",
+            "schema": {
+              "$ref": "#/components/schemas/DirectionParam",
+              "description": "`out` (default), `in` or `both`."
+            },
+            "style": "form"
+          },
+          {
+            "description": "Walk from the latest live version of each record instead of the\nversion the edge names.",
+            "in": "query",
+            "name": "follow_latest",
+            "schema": {
+              "description": "Walk from the latest live version of each record instead of the\nversion the edge names.",
+              "type": "boolean"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Comma-separated relation type ids to follow; all by default.",
+            "in": "query",
+            "name": "types",
+            "schema": {
+              "description": "Comma-separated relation type ids to follow; all by default.",
+              "type": "string"
+            },
+            "style": "form"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphDto"
+                }
+              }
+            },
+            "description": "What a traversal found."
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Walk the relation graph"
+      },
+      "post": {
+        "description": "Addresses the source version with `@{seq}`. `to` is `{ns}/{name}@{seq}`, `external:<url>` or `hf:<repo>@<sha>`; a hub reference that does not exist yet is stored textually and resolves on its own once it does.",
+        "operationId": "add_card_relation",
+        "parameters": [
+          {
+            "description": "Record name, optionally followed by `@{seq}` or `@{label}`.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Record name, optionally followed by `@{seq}` or `@{label}`.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "Namespace: a user login or an organisation slug.",
+            "in": "path",
+            "name": "ns",
+            "required": true,
+            "schema": {
+              "description": "Namespace: a user login or an organisation slug.",
+              "type": "string"
+            },
+            "style": "simple"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewRelationBody"
+              }
+            }
+          },
+          "description": "Body of `POST …/relations`.",
+          "required": true
+        },
+        "responses": {
+          "400": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Failed to parse the request body as JSON"
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "415": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Expected request with `Content-Type: application/json`"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Add an edge"
+      }
+    },
+    "/api/v1/cards/{ns}/{name}/settings": {
+      "patch": {
+        "description": "Makes the name public or private. Every version follows.",
+        "operationId": "settings_card",
+        "parameters": [
+          {
+            "description": "Record name, optionally followed by `@{seq}` or `@{label}` to\naddress one version.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Record name, optionally followed by `@{seq}` or `@{label}` to\naddress one version.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "Namespace: a user login or an organisation slug.",
+            "in": "path",
+            "name": "ns",
+            "required": true,
+            "schema": {
+              "description": "Namespace: a user login or an organisation slug.",
+              "type": "string"
+            },
+            "style": "simple"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Settings"
+              }
+            }
+          },
+          "description": "Body of `PATCH …/{name}/settings` and its response.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Settings"
+                }
+              }
+            },
+            "description": "Body of `PATCH …/{name}/settings` and its response."
+          },
+          "400": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Failed to parse the request body as JSON"
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "415": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Expected request with `Content-Type: application/json`"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Change visibility"
+      }
+    },
+    "/api/v1/cards/{ns}/{name}/versions": {
+      "get": {
+        "description": "Every version of the name, oldest first, tombstones included and without bodies.",
+        "operationId": "versions_card",
+        "parameters": [
+          {
+            "description": "Record name, optionally followed by `@{seq}` or `@{label}` to\naddress one version.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Record name, optionally followed by `@{seq}` or `@{label}` to\naddress one version.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "Namespace: a user login or an organisation slug.",
+            "in": "path",
+            "name": "ns",
+            "required": true,
+            "schema": {
+              "description": "Namespace: a user login or an organisation slug.",
+              "type": "string"
+            },
+            "style": "simple"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_for_VersionEnvelope"
+                }
+              }
+            },
+            "description": "One page of results.\n\nThe schema name carries the item type (`Page_for_VersionEnvelope`), so a\ngenerated client gets one page type per item type instead of `Page` and\n`Page2`."
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Version history"
+      }
+    },
+    "/api/v1/evals": {
+      "get": {
+        "description": "Names with at least one live version, newest first by default. Private records appear only for a caller whose token covers their namespace. Paging is by opaque cursor.",
+        "operationId": "list_evals",
+        "parameters": [
+          {
+            "description": "Cursor from a previous page's `next_cursor`.",
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "description": "Cursor from a previous page's `next_cursor`.",
+              "type": "string"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Page size, 1–200; default 50.",
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "description": "Page size, 1–200; default 50.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Only records in this namespace.",
+            "in": "query",
+            "name": "ns",
+            "schema": {
+              "description": "Only records in this namespace.",
+              "type": "string"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Case-insensitive substring of the name or the latest title.",
+            "in": "query",
+            "name": "search",
+            "schema": {
+              "description": "Case-insensitive substring of the name or the latest title.",
+              "type": "string"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Sort order; default `created_desc`.",
+            "in": "query",
+            "name": "sort",
+            "schema": {
+              "$ref": "#/components/schemas/SortParam",
+              "description": "Sort order; default `created_desc`."
+            },
+            "style": "form"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_for_ListItem"
+                }
+              }
+            },
+            "description": "One page of results.\n\nThe schema name carries the item type (`Page_for_VersionEnvelope`), so a\ngenerated client gets one page type per item type instead of `Page` and\n`Page2`."
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "List evals"
+      }
+    },
+    "/api/v1/evals/{ns}/{name}": {
+      "delete": {
+        "description": "Addresses one version with `@{seq}` and replaces its body with a tombstone carrying a reason. The version id, the content hash and `changed[]` remain, so relations pointing at it still resolve and show what happened.",
+        "operationId": "delete_eval",
+        "parameters": [
+          {
+            "description": "Record name, optionally followed by `@{seq}` or `@{label}` to\naddress one version.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Record name, optionally followed by `@{seq}` or `@{label}` to\naddress one version.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "Namespace: a user login or an organisation slug.",
+            "in": "path",
+            "name": "ns",
+            "required": true,
+            "schema": {
+              "description": "Namespace: a user login or an organisation slug.",
+              "type": "string"
+            },
+            "style": "simple"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TombstoneBody"
+              }
+            }
+          },
+          "description": "Body of `DELETE …/{name}@{seq}`.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionEnvelope"
+                }
+              }
+            },
+            "description": "What the hub adds around a stored version."
+          },
+          "400": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Failed to parse the request body as JSON"
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "415": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Expected request with `Content-Type: application/json`"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Tombstone Eval version"
+      },
+      "get": {
+        "description": "The latest live version of `{ns}/{name}`, or the version `@{seq}`. Private records are `404` to a caller whose token does not cover `ns`.",
+        "operationId": "get_eval",
+        "parameters": [
+          {
+            "description": "Record name, optionally followed by `@{seq}` or `@{label}` to\naddress one version.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Record name, optionally followed by `@{seq}` or `@{label}` to\naddress one version.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "Namespace: a user login or an organisation slug.",
+            "in": "path",
+            "name": "ns",
+            "required": true,
+            "schema": {
+              "description": "Namespace: a user login or an organisation slug.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "Comma-separated: `fingerprints`, `badges`, `changed`, `relations`.",
+            "in": "query",
+            "name": "expand",
+            "schema": {
+              "description": "Comma-separated: `fingerprints`, `badges`, `changed`, `relations`.",
+              "type": "string"
+            },
+            "style": "form"
           }
         ],
         "responses": {
@@ -525,19 +2749,19 @@ expression: body
             "description": "The record is invalid; every violation is listed."
           }
         },
-        "summary": "Read an Eval version"
+        "summary": "Read Eval version"
       },
       "post": {
         "description": "Validates the body, canonicalises it and stores it as the next version of `{ns}/{name}`, creating the name if needed. Requires a token with `write` on `ns`. If the canonical body equals the latest version's, that version is returned with `200` and nothing is written.",
         "operationId": "post_eval",
         "parameters": [
           {
-            "description": "Record name, optionally followed by `@{seq}` to address one version.",
+            "description": "Record name, optionally followed by `@{seq}` or `@{label}` to\naddress one version.",
             "in": "path",
             "name": "name",
             "required": true,
             "schema": {
-              "description": "Record name, optionally followed by `@{seq}` to address one version.",
+              "description": "Record name, optionally followed by `@{seq}` or `@{label}` to\naddress one version.",
               "type": "string"
             },
             "style": "simple"
@@ -643,7 +2867,572 @@ expression: body
             "description": "The record is invalid; every violation is listed."
           }
         },
-        "summary": "Append an Eval version"
+        "summary": "Append Eval version"
+      }
+    },
+    "/api/v1/evals/{ns}/{name}/cards": {
+      "get": {
+        "description": "Every visible Card whose latest live version has a `core/uses_eval` edge to this Eval version, with its per-facet fingerprints and whether its harness and model match the Eval's. `group_by=fingerprint.{facet}` groups them by that fingerprint. The hub lines the Cards up; it does not rank them.",
+        "operationId": "eval_cards",
+        "parameters": [
+          {
+            "description": "Record name, optionally followed by `@{seq}` or `@{label}`.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Record name, optionally followed by `@{seq}` or `@{label}`.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "Namespace: a user login or an organisation slug.",
+            "in": "path",
+            "name": "ns",
+            "required": true,
+            "schema": {
+              "description": "Namespace: a user login or an organisation slug.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "`fingerprint.{facet}` for one of the seven facets. Groups the\nCards by that fingerprint; omitted, the list is flat.",
+            "in": "query",
+            "name": "group_by",
+            "schema": {
+              "description": "`fingerprint.{facet}` for one of the seven facets. Groups the\nCards by that fingerprint; omitted, the list is flat.",
+              "type": "string"
+            },
+            "style": "form"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComparisonDto"
+                }
+              }
+            },
+            "description": "The comparison view: Cards measured on one Eval version."
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Cards measured on this Eval"
+      }
+    },
+    "/api/v1/evals/{ns}/{name}/label": {
+      "patch": {
+        "description": "Addresses the target version with `@{seq}`. A label is unique within the name and never purely numeric; re-pointing moves it off whichever version held it.",
+        "operationId": "label_eval",
+        "parameters": [
+          {
+            "description": "Record name, optionally followed by `@{seq}` or `@{label}` to\naddress one version.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Record name, optionally followed by `@{seq}` or `@{label}` to\naddress one version.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "Namespace: a user login or an organisation slug.",
+            "in": "path",
+            "name": "ns",
+            "required": true,
+            "schema": {
+              "description": "Namespace: a user login or an organisation slug.",
+              "type": "string"
+            },
+            "style": "simple"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LabelBody"
+              }
+            }
+          },
+          "description": "Body of `PATCH …/{name}@{seq}/label`.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionEnvelope"
+                }
+              }
+            },
+            "description": "What the hub adds around a stored version."
+          },
+          "400": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Failed to parse the request body as JSON"
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "415": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Expected request with `Content-Type: application/json`"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Point a label at a version"
+      }
+    },
+    "/api/v1/evals/{ns}/{name}/relations": {
+      "get": {
+        "description": "Breadth-first from the addressed version. `direction` is `out` (default), `in` or `both`; `depth` is 1–5; `types` filters by relation type. Endpoints the caller may not see are reduced to their version id and content hash.",
+        "operationId": "eval_relations",
+        "parameters": [
+          {
+            "description": "Record name, optionally followed by `@{seq}` or `@{label}`.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Record name, optionally followed by `@{seq}` or `@{label}`.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "Namespace: a user login or an organisation slug.",
+            "in": "path",
+            "name": "ns",
+            "required": true,
+            "schema": {
+              "description": "Namespace: a user login or an organisation slug.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "How many edges from the start, 1–5; default 1.",
+            "in": "query",
+            "name": "depth",
+            "schema": {
+              "description": "How many edges from the start, 1–5; default 1.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "style": "form"
+          },
+          {
+            "description": "`out` (default), `in` or `both`.",
+            "in": "query",
+            "name": "direction",
+            "schema": {
+              "$ref": "#/components/schemas/DirectionParam",
+              "description": "`out` (default), `in` or `both`."
+            },
+            "style": "form"
+          },
+          {
+            "description": "Walk from the latest live version of each record instead of the\nversion the edge names.",
+            "in": "query",
+            "name": "follow_latest",
+            "schema": {
+              "description": "Walk from the latest live version of each record instead of the\nversion the edge names.",
+              "type": "boolean"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Comma-separated relation type ids to follow; all by default.",
+            "in": "query",
+            "name": "types",
+            "schema": {
+              "description": "Comma-separated relation type ids to follow; all by default.",
+              "type": "string"
+            },
+            "style": "form"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphDto"
+                }
+              }
+            },
+            "description": "What a traversal found."
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Walk the relation graph"
+      },
+      "post": {
+        "description": "Addresses the source version with `@{seq}`. `to` is `{ns}/{name}@{seq}`, `external:<url>` or `hf:<repo>@<sha>`; a hub reference that does not exist yet is stored textually and resolves on its own once it does.",
+        "operationId": "add_eval_relation",
+        "parameters": [
+          {
+            "description": "Record name, optionally followed by `@{seq}` or `@{label}`.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Record name, optionally followed by `@{seq}` or `@{label}`.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "Namespace: a user login or an organisation slug.",
+            "in": "path",
+            "name": "ns",
+            "required": true,
+            "schema": {
+              "description": "Namespace: a user login or an organisation slug.",
+              "type": "string"
+            },
+            "style": "simple"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewRelationBody"
+              }
+            }
+          },
+          "description": "Body of `POST …/relations`.",
+          "required": true
+        },
+        "responses": {
+          "400": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Failed to parse the request body as JSON"
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "415": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Expected request with `Content-Type: application/json`"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Add an edge"
+      }
+    },
+    "/api/v1/evals/{ns}/{name}/settings": {
+      "patch": {
+        "description": "Makes the name public or private. Every version follows.",
+        "operationId": "settings_eval",
+        "parameters": [
+          {
+            "description": "Record name, optionally followed by `@{seq}` or `@{label}` to\naddress one version.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Record name, optionally followed by `@{seq}` or `@{label}` to\naddress one version.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "Namespace: a user login or an organisation slug.",
+            "in": "path",
+            "name": "ns",
+            "required": true,
+            "schema": {
+              "description": "Namespace: a user login or an organisation slug.",
+              "type": "string"
+            },
+            "style": "simple"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Settings"
+              }
+            }
+          },
+          "description": "Body of `PATCH …/{name}/settings` and its response.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Settings"
+                }
+              }
+            },
+            "description": "Body of `PATCH …/{name}/settings` and its response."
+          },
+          "400": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Failed to parse the request body as JSON"
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "415": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Expected request with `Content-Type: application/json`"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Change visibility"
+      }
+    },
+    "/api/v1/evals/{ns}/{name}/versions": {
+      "get": {
+        "description": "Every version of the name, oldest first, tombstones included and without bodies.",
+        "operationId": "versions_eval",
+        "parameters": [
+          {
+            "description": "Record name, optionally followed by `@{seq}` or `@{label}` to\naddress one version.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Record name, optionally followed by `@{seq}` or `@{label}` to\naddress one version.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "Namespace: a user login or an organisation slug.",
+            "in": "path",
+            "name": "ns",
+            "required": true,
+            "schema": {
+              "description": "Namespace: a user login or an organisation slug.",
+              "type": "string"
+            },
+            "style": "simple"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_for_VersionEnvelope"
+                }
+              }
+            },
+            "description": "One page of results.\n\nThe schema name carries the item type (`Page_for_VersionEnvelope`), so a\ngenerated client gets one page type per item type instead of `Page` and\n`Page2`."
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Version history"
       }
     },
     "/api/v1/healthz": {
@@ -663,6 +3452,429 @@ expression: body
           }
         },
         "summary": "Liveness"
+      }
+    },
+    "/api/v1/namespaces/{ns}": {
+      "get": {
+        "description": "Counts only the records the caller may see.",
+        "operationId": "get_namespace",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NamespaceDto"
+                }
+              }
+            },
+            "description": "A namespace and what it holds."
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "A namespace and what it holds"
+      }
+    },
+    "/api/v1/orgs": {
+      "post": {
+        "description": "The caller becomes its first `admin`.",
+        "operationId": "create_org",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewOrgBody"
+              }
+            }
+          },
+          "description": "Body of `POST /orgs`.",
+          "required": true
+        },
+        "responses": {
+          "400": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Failed to parse the request body as JSON"
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "415": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Expected request with `Content-Type: application/json`"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Create an organisation"
+      }
+    },
+    "/api/v1/orgs/{org}/members": {
+      "get": {
+        "description": "Any member may read the roster.",
+        "operationId": "list_members",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Items_for_MemberDto"
+                }
+              }
+            },
+            "description": "A list of things, without paging: these are all small.\n\nThe schema name carries the item type, so a generated client gets one\nlist type per item type instead of `Items` and `Items2`."
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Members of an organisation"
+      },
+      "post": {
+        "description": "`admin` on the organisation.",
+        "operationId": "add_member",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewMemberBody"
+              }
+            }
+          },
+          "description": "Body of `POST /orgs/{org}/members`.",
+          "required": true
+        },
+        "responses": {
+          "400": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Failed to parse the request body as JSON"
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "415": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Expected request with `Content-Type: application/json`"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Add a member or change their role"
+      }
+    },
+    "/api/v1/orgs/{org}/members/{user}": {
+      "delete": {
+        "description": "`admin` on the organisation.",
+        "operationId": "remove_member",
+        "responses": {
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Remove a member"
+      }
+    },
+    "/api/v1/tokens": {
+      "get": {
+        "description": "Secrets are not included; they are shown once, at issue.",
+        "operationId": "list_tokens",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Items_for_TokenDto"
+                }
+              }
+            },
+            "description": "A list of things, without paging: these are all small.\n\nThe schema name carries the item type, so a generated client gets one\nlist type per item type instead of `Items` and `Items2`."
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "The caller's tokens"
+      },
+      "post": {
+        "description": "The new token may name the caller's own login and organisations where the caller is `admin`, and its scope may not exceed the presenting token's. The secret is in the response and nowhere else.",
+        "operationId": "create_token",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewTokenBody"
+              }
+            }
+          },
+          "description": "Body of `POST /tokens`.",
+          "required": true
+        },
+        "responses": {
+          "400": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Failed to parse the request body as JSON"
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "415": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Expected request with `Content-Type: application/json`"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Issue a token"
+      }
+    },
+    "/api/v1/tokens/{token_id}": {
+      "delete": {
+        "description": "Takes effect on the next request; there is no cache.",
+        "operationId": "revoke_token",
+        "responses": {
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Revoke a token"
       }
     },
     "/api/v1/whoami": {

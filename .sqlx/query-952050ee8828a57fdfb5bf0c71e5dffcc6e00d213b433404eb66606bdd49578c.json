@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS(\n                 SELECT 1 FROM registry WHERE kind = 'metrics' AND ns = $1 AND id = $2\n               ) AS \"exists!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "exists!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "952050ee8828a57fdfb5bf0c71e5dffcc6e00d213b433404eb66606bdd49578c"
+}
