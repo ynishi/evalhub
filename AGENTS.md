@@ -10,6 +10,9 @@ copy of anything; follow the links.
 - **Verification**: per crate, `cargo test -p <crate>` (`just check` runs
   the full list). Never `cargo test --workspace` as the routine check.
   `evalhub-store` and `evalhub-server` tests need Docker.
+- **E2E**: `just e2e` boots the release binary against Docker Postgres,
+  fetches the embedded UI and the API (`e2e/smoke.sh`), then runs the
+  Playwright suite in `web/tests/browser` against it.
 - **Web UI**: `just web-build` writes `crates/evalhub-server/web-dist`
   (gitignored, shipped via the crate's `include`). A release build of the
   server fails without it; `just package` checks the `.crate` carries it.

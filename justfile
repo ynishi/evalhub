@@ -70,6 +70,35 @@ sqlx-check:
 sqlx-prepare:
     cd crates/evalhub-store && cargo sqlx prepare
 
+# ---------------------------------------------------------------------- e2e
+
+# Boot the real release binary against a throwaway Postgres and ask it for
+# what a browser would: the embedded UI, an immutable asset, a deep link,
+# the API. Needs Docker. See e2e/smoke.sh.
+e2e: web-build e2e-install
+    cargo build --release -p evalhub-server
+    e2e/smoke.sh target/release/evalhub
+
+# Fetch the Chromium headless shell Playwright drives. No root: it lands in
+# ~/.cache/ms-playwright (or $PLAYWRIGHT_BROWSERS_PATH). Then confirm the
+# host has the shared libraries it links against, because a missing one
+# fails later with a bare "error while loading shared libraries".
+e2e-install: web-install
+    #!/usr/bin/env bash
+    set -euo pipefail
+    (cd {{ web_dir }} && corepack pnpm exec playwright install --only-shell chromium)
+    root=${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}
+    shell=$(find "$root" -type f -name chrome-headless-shell | head -1)
+    [ -n "$shell" ] || { echo "e2e-install: no chrome-headless-shell under $root" >&2; exit 1; }
+    missing=$(ldd "$shell" | grep 'not found' || true)
+    if [ -n "$missing" ]; then
+        echo "e2e-install: the headless shell needs libraries this host lacks:" >&2
+        echo "$missing" >&2
+        echo "e2e-install: install them (\`corepack pnpm exec playwright install-deps chromium\`, needs sudo) or run the suite in the Playwright Docker image" >&2
+        exit 1
+    fi
+    echo "e2e-install: $shell, all shared libraries present"
+
 # ---------------------------------------------------------------- packaging
 
 # Build the UI, package every crate, and gate the result. This is the

@@ -23,6 +23,7 @@ corepack pnpm build      # writes ../crates/evalhub-server/web-dist
 corepack pnpm check      # svelte-check: types and Svelte diagnostics
 corepack pnpm lint       # prettier --check
 corepack pnpm format     # prettier --write
+corepack pnpm test:e2e   # Playwright, against a hub named by EVALHUB_E2E_BASE_URL (see `just e2e`)
 ```
 
 `pnpm dev` proxies `/api`, `/schemas` and `/openapi.json` to

@@ -70,6 +70,17 @@ routine check: linking every test binary in parallel is what exhausts memory
 on a shared machine. Run the crates you touched, then the ones that depend on
 them.
 
+`just e2e` is the one check that runs the binary a user would: it builds the
+UI and a release `evalhub`, starts a throwaway Postgres, migrates, serves
+from outside the source tree, and fetches the embedded UI, an immutable
+asset, a deep link and the API (`e2e/smoke.sh`), then drives the same server
+with Playwright (`web/tests/browser`): the bundle boots, routes on the
+client, and paints a list the API filled. Run it after a change to
+`embed.rs`, `build.rs`, `main.rs` or the web build; it needs Docker. The
+browser is fetched by `just e2e-install` into `~/.cache/ms-playwright`
+without root; the recipe checks the host has the shared libraries the
+headless shell links against and says what to do if not.
+
 Packaging has its own gate. `just package` builds the web UI into
 `crates/evalhub-server/web-dist`, runs `cargo package --workspace`, and then
 inspects every `.crate`: LICENSE and README present, the server carrying
