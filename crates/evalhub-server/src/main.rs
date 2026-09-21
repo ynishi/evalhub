@@ -230,6 +230,13 @@ async fn serve(loaded: Loaded) -> anyhow::Result<()> {
     }
     info!("database connected, schema current");
 
+    if loaded.config.auth.cookie_key.is_none() {
+        warn!(
+            "auth.cookie_key is unset; UI sessions are encrypted with a key \
+             generated for this process and end when it restarts"
+        );
+    }
+
     let objects = object_store(&loaded)?;
     // The garbage collector sweeps every hour; the grace period is what
     // keeps it from collecting an upload that is ready but not yet

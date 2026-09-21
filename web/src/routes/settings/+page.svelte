@@ -1,0 +1,262 @@
+<script lang="ts">
+	// Tokens, and the two record settings a reader can change from here.
+	//
+	// A freshly issued secret is shown once and never again — the hub keeps
+	// only its hash — so this screen makes that moment loud rather than
+	// letting it scroll past as one more row.
+	import {
+		createToken,
+		listTokens,
+		revokeToken,
+		setLabel,
+		setVisibility,
+		type Kind,
+		type Scope,
+		type Token,
+		type Visibility
+	} from '$lib/api/client';
+	import Errors from '$lib/components/Errors.svelte';
+	import { session } from '$lib/session.svelte';
+
+	let tokens = $state<Token[]>([]);
+	let error = $state<unknown>(null);
+	let issued = $state<{ secret: string; token_id: string } | null>(null);
+
+	let scope = $state<Scope>('read');
+	let namespaces = $state('');
+
+	let recordKind = $state<Kind>('cards');
+	let recordNs = $state('');
+	let recordName = $state('');
+	let visibility = $state<Visibility>('public');
+	let labelSeq = $state('');
+	let labelName = $state('');
+	let notice = $state<string | null>(null);
+
+	async function reload() {
+		error = null;
+		try {
+			tokens = await listTokens();
+		} catch (e) {
+			error = e;
+		}
+	}
+
+	$effect(() => {
+		if (session.signedIn) void reload();
+	});
+
+	$effect(() => {
+		if (namespaces === '' && session.who.user) namespaces = session.who.user;
+	});
+
+	async function issue(event: SubmitEvent) {
+		event.preventDefault();
+		error = null;
+		try {
+			const list = namespaces
+				.split(',')
+				.map((n) => n.trim())
+				.filter(Boolean);
+			const result = await createToken(scope, list);
+			issued = { secret: result.secret, token_id: result.token_id };
+			await reload();
+		} catch (e) {
+			error = e;
+		}
+	}
+
+	async function revoke(token: Token) {
+		if (!confirm(`Revoke token ${token.prefix}…? It stops working at once.`)) return;
+		try {
+			await revokeToken(token.token_id);
+			await reload();
+		} catch (e) {
+			error = e;
+		}
+	}
+
+	async function applyVisibility(event: SubmitEvent) {
+		event.preventDefault();
+		error = null;
+		notice = null;
+		try {
+			await setVisibility(recordKind, recordNs.trim(), recordName.trim(), visibility);
+			notice = `${recordNs}/${recordName} is now ${visibility}.`;
+		} catch (e) {
+			error = e;
+		}
+	}
+
+	async function applyLabel(event: SubmitEvent) {
+		event.preventDefault();
+		error = null;
+		notice = null;
+		try {
+			await setLabel(
+				recordKind,
+				recordNs.trim(),
+				`${recordName.trim()}@${labelSeq.trim()}`,
+				labelName.trim()
+			);
+			notice = `Label “${labelName}” now points at version ${labelSeq}.`;
+		} catch (e) {
+			error = e;
+		}
+	}
+</script>
+
+<svelte:head><title>Settings · evalhub</title></svelte:head>
+
+<h1>Settings</h1>
+
+{#if !session.signedIn}
+	<p class="empty">
+		<a href="/login">Sign in</a> to manage tokens and record settings.
+	</p>
+{:else}
+	<Errors {error} />
+	{#if notice}<p class="notice">{notice}</p>{/if}
+
+	{#if issued}
+		<div class="notice secret" role="alert">
+			<strong>Copy this token now. It is not shown again.</strong>
+			<p class="mono secret-value">{issued.secret}</p>
+			<p class="small muted">
+				The hub keeps only its sha256, so nobody — including the hub — can show it to you a second
+				time. Lose it and issue another.
+			</p>
+			<button onclick={() => (issued = null)}>I have copied it</button>
+		</div>
+	{/if}
+
+	<h2>Issue a token</h2>
+	<form class="controls" onsubmit={issue}>
+		<div>
+			<label for="scope">Scope</label>
+			<select id="scope" bind:value={scope}>
+				<option value="read">read</option>
+				<option value="write">write</option>
+				<option value="admin">admin</option>
+			</select>
+		</div>
+		<div class="grow">
+			<label for="namespaces">Namespaces (comma separated)</label>
+			<input
+				id="namespaces"
+				type="text"
+				bind:value={namespaces}
+				placeholder={session.who.user ?? ''}
+			/>
+		</div>
+		<button class="primary" type="submit">Issue</button>
+	</form>
+	<p class="faint small">
+		A new token may name your own login and organisations where you are an admin, and its scope
+		cannot exceed the one you are using now.
+	</p>
+
+	<h2>Your tokens</h2>
+	{#if tokens.length === 0}
+		<p class="empty">No tokens.</p>
+	{:else}
+		<div class="scroll-x">
+			<table>
+				<thead>
+					<tr>
+						<th scope="col">Prefix</th>
+						<th scope="col">Scope</th>
+						<th scope="col">Namespaces</th>
+						<th scope="col">Issued</th>
+						<th scope="col">State</th>
+						<th scope="col"></th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each tokens as token (token.token_id)}
+						<tr>
+							<td class="mono">{token.prefix}…</td>
+							<td><span class="tag">{token.scope}</span></td>
+							<td class="small">{token.namespaces.join(', ')}</td>
+							<td class="faint small">{token.created_at.slice(0, 10)}</td>
+							<td class="small">
+								{#if token.revoked_at}
+									<span class="muted">revoked {token.revoked_at.slice(0, 10)}</span>
+								{:else}
+									active
+								{/if}
+							</td>
+							<td>
+								{#if !token.revoked_at}
+									<button class="link danger" onclick={() => revoke(token)}>revoke</button>
+								{/if}
+							</td>
+						</tr>
+					{/each}
+				</tbody>
+			</table>
+		</div>
+	{/if}
+
+	<h2>Record settings</h2>
+	<p class="muted small">
+		Both need <code>write</code> on the namespace. Creating records is the API's job, not this UI's.
+	</p>
+
+	<div class="controls">
+		<div>
+			<label for="kind">Kind</label>
+			<select id="kind" bind:value={recordKind}>
+				<option value="cards">cards</option>
+				<option value="evals">evals</option>
+			</select>
+		</div>
+		<div>
+			<label for="rec-ns">Namespace</label>
+			<input id="rec-ns" type="text" bind:value={recordNs} />
+		</div>
+		<div class="grow">
+			<label for="rec-name">Name</label>
+			<input id="rec-name" type="text" bind:value={recordName} />
+		</div>
+	</div>
+
+	<form class="controls" onsubmit={applyVisibility}>
+		<div>
+			<label for="visibility">Visibility</label>
+			<select id="visibility" bind:value={visibility}>
+				<option value="public">public</option>
+				<option value="private">private</option>
+			</select>
+		</div>
+		<button type="submit" disabled={!recordNs || !recordName}>Apply visibility</button>
+	</form>
+
+	<form class="controls" onsubmit={applyLabel}>
+		<div>
+			<label for="label-seq">Version</label>
+			<input id="label-seq" type="text" bind:value={labelSeq} placeholder="seq" />
+		</div>
+		<div>
+			<label for="label-name">Label</label>
+			<input id="label-name" type="text" bind:value={labelName} placeholder="baseline" />
+		</div>
+		<button type="submit" disabled={!recordNs || !recordName || !labelSeq || !labelName}>
+			Move label
+		</button>
+	</form>
+	<p class="faint small">A label is unique within the name and is never purely numeric.</p>
+{/if}
+
+<style>
+	.secret-value {
+		font-size: 1rem;
+		word-break: break-all;
+		background: var(--bg);
+		border: 1px solid var(--line);
+		border-radius: var(--radius);
+		padding: 0.5rem;
+		margin: 0.5rem 0;
+		user-select: all;
+	}
+</style>

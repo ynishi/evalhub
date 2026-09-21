@@ -185,7 +185,7 @@
 //! | M1        | Walking skeleton: record types and served schemas; canonical form and ids; `records` repository with the container fixture and `.sqlx/`; token auth with a CLI bootstrap; `POST` / `GET` of a Card and an Eval, idempotent on `content_hash`, private by default | done |
 //! | M2        | Record API complete: validation (`422 errors[]`), fingerprints and badges, attachments and `409 attachment_missing`, versions / labels / settings / tombstones, relations and the comparison view, tokens / orgs, list with signed cursors | done |
 //! | M3        | Query DSL and registry: grammar, type check, IR → SQL, `POST …/query`; `core/` seed, `ext_schemas` index job, badge recompute; `hf-model-index` export | done |
-//! | M4        | Web UI: SvelteKit SPA generated from `openapi.json`, embedded in the binary; and the `bundle` export, whose shape is still open | next |
+//! | M4        | Web UI: SvelteKit SPA generated from `openapi.json`, embedded in the binary, with a cookie session in front of it; and the `bundle` export, whose shape is still open | in progress |
 //!
 //! Within a milestone the order follows the ingest path: schema types,
 //! then the pure rules in `evalhub_core`, then the store, then the

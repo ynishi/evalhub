@@ -78,13 +78,29 @@ reqwest ={ version = "0.13", default-features = false, features = ["rustls"] }
 # server
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 axum = "0.8"
-axum-extra = { version = "0.12", features = ["cookie", "cookie-private"] }
+# `cookie-key-expansion` turns the configured `auth.cookie_key` into the
+# signing and encryption halves a private cookie needs, by HKDF rather
+# than by a hand-rolled split.
+axum-extra = { version = "0.12", features = [
+    "cookie",
+    "cookie-private",
+    "cookie-key-expansion",
+] }
 # aide 0.15 (stable) depends on schemars 0.9; the 0.16 line is the one on
 # schemars 1 and axum 0.8. Pinned to the alpha until 0.16.0 ships, then relax.
-aide = { version = "=0.16.0-alpha.4", features = ["axum", "axum-json", "axum-query"] }
+aide = { version = "=0.16.0-alpha.4", features = [
+    "axum",
+    "axum-json",
+    "axum-query",
+    # `PrivateCookieJar` is an extractor of the session handlers, so aide
+    # needs to know it contributes nothing to the documented request.
+    "axum-extra-cookie-private",
+] }
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.7", features = ["trace", "compression-gzip", "set-header", "limit"] }
-rust-embed = "8"
+# `mime-guess` gives an embedded file the content type its name implies,
+# which is how the SPA's assets are served with the right one.
+rust-embed = { version = "8", features = ["mime-guess"] }
 # YAML for the model-index export. `serde_yaml` is unmaintained and its
 # other successor `serde_yml` publishes itself as deprecated; this is the
 # maintained fork.

@@ -3,7 +3,7 @@
 //! | Group                    | Endpoints                                                                                                   |
 //! | ------------------------ | ----------------------------------------------------------------------------------------------------------- |
 //! | [`meta`]                 | `GET /openapi.json`, `GET /schemas/{name}`, `GET /whoami`, `GET /healthz`                                   |
-//! | [`auth`]                 | `GET,POST,DELETE /tokens`, `GET /namespaces/{ns}`, `GET,POST,DELETE /orgs/{org}/members`                    |
+//! | [`auth`]                 | `POST,DELETE /session`, `GET,POST,DELETE /tokens`, `GET /namespaces/{ns}`, `GET,POST,DELETE /orgs/{org}/members` |
 //! | [`records`]              | `POST /{cards\|evals}/{ns}/{name}?label=`, `GET …/{name}[@{seq}\|@{label}]?expand=`, `GET …/versions`, `DELETE …@{…}`, `PATCH …@{…}/label`, `PATCH …/settings`, `GET /{cards\|evals}?ns&search&sort&cursor` |
 //! | [`attachments`]          | `POST /attachments`, `POST /attachments/{sha256}/complete`, `HEAD,GET /attachments/{sha256}` (GET → 302)    |
 //! | [`query`]                | `POST /{cards\|evals}/query`                                                                                |
@@ -83,6 +83,34 @@ pub fn router(
                 op.id("whoami")
                     .summary("Who the hub thinks the caller is")
                     .description("Identity and scope of the presented token, or anonymous.")
+            }),
+        )
+        .api_route(
+            "/session",
+            post_with(auth::create_session, |op| {
+                op.id("create_session")
+                    .summary("Open a UI session")
+                    .description(
+                        "Exchanges a token for a session cookie. The hub has no \
+                         passwords, so the credential is a token; the cookie carries a \
+                         second token minted for the same user with the same scope and \
+                         namespaces, which `DELETE /session` revokes. The presented \
+                         token is left alone.",
+                    )
+                    .response_with::<200, Json<meta::Whoami>, _>(|r| {
+                        r.description("The session's identity, as `whoami` reports it.")
+                    })
+            })
+            .delete_with(auth::delete_session, |op| {
+                op.id("delete_session")
+                    .summary("End a UI session")
+                    .description(
+                        "Revokes the token the cookie carries and clears the cookie. \
+                         Answers `204` whether or not a session was open.",
+                    )
+                    .response_with::<204, (), _>(|r| {
+                        r.description("The session is closed and the cookie cleared.")
+                    })
             }),
         )
         .api_route(
@@ -318,12 +346,21 @@ pub fn router(
             .as_ref()
             .map(secrecy::ExposeSecret::expose_secret),
     );
+    let cookie_key = crate::state::CookieKey::new(
+        config
+            .auth
+            .cookie_key
+            .as_ref()
+            .map(secrecy::ExposeSecret::expose_secret),
+        &config.bind,
+    );
     let state = AppState {
         config,
         db,
         objects,
         openapi: Arc::new(openapi),
         cursors,
+        cookie_key,
         path_tables,
     };
 
@@ -451,18 +488,90 @@ use record_routes;
 /// generates from should still describe the filter, and the grammar can
 /// describe itself, so the two are joined here — the one place that knows
 /// both.
+///
+/// # Why the definitions move
+///
+/// The grammar's schema is a standalone JSON Schema document: its
+/// recursive parts live in a root `$defs` and refer to each other as
+/// `#/$defs/filter`. Pasted into `components/schemas/QueryRequest`, those
+/// pointers still resolve from the *document* root, where there is no
+/// `$defs` — every generator then fails, and the ones that do not produce
+/// an unusable type. So each definition is hoisted into
+/// `components/schemas` under a prefixed name and every pointer is
+/// rewritten to match. A generated client ends up with a real `QueryFilter`
+/// type it can name.
 fn tighten_query_schema(openapi: &mut aide::openapi::OpenApi) {
+    use aide::openapi::SchemaObject;
+
     let Some(components) = openapi.components.as_mut() else {
         return;
     };
-    let Some(request) = components.schemas.get_mut("QueryRequest") else {
+    if !components.schemas.contains_key("QueryRequest") {
         return;
+    }
+
+    let mut filter = evalhub_query::request_schema().to_value();
+    let defs = filter
+        .as_object_mut()
+        .and_then(|o| o.remove("$defs"))
+        .and_then(|d| match d {
+            serde_json::Value::Object(map) => Some(map),
+            _ => None,
+        })
+        .unwrap_or_default();
+
+    // `filter` becomes `QueryFilter`, so the name says which document it
+    // belongs to when it sits beside the record schemas.
+    let component_name = |def: &str| {
+        let mut chars = def.chars();
+        match chars.next() {
+            Some(first) => format!("Query{}{}", first.to_uppercase(), chars.as_str()),
+            None => "Query".to_string(),
+        }
     };
-    let filter = evalhub_query::request_schema().to_value();
-    if let Some(object) = request.json_schema.as_object_mut()
+
+    for (name, mut schema) in defs {
+        repoint_defs(&mut schema, &component_name);
+        components.schemas.insert(
+            component_name(&name),
+            SchemaObject {
+                json_schema: schemars::Schema::try_from(schema).unwrap_or_default(),
+                example: None,
+                external_docs: None,
+            },
+        );
+    }
+    repoint_defs(&mut filter, &component_name);
+
+    if let Some(request) = components.schemas.get_mut("QueryRequest")
+        && let Some(object) = request.json_schema.as_object_mut()
         && let Some(properties) = object.get_mut("properties").and_then(|p| p.as_object_mut())
     {
         properties.insert("where".to_string(), filter);
+    }
+}
+
+/// Rewrite every `#/$defs/<name>` pointer to the component it was hoisted
+/// to, anywhere in the value.
+fn repoint_defs(value: &mut serde_json::Value, component_name: &dyn Fn(&str) -> String) {
+    match value {
+        serde_json::Value::Object(map) => {
+            if let Some(serde_json::Value::String(reference)) = map.get("$ref")
+                && let Some(def) = reference.strip_prefix("#/$defs/")
+            {
+                let target = format!("#/components/schemas/{}", component_name(def));
+                map.insert("$ref".to_string(), serde_json::Value::String(target));
+            }
+            for child in map.values_mut() {
+                repoint_defs(child, component_name);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                repoint_defs(item, component_name);
+            }
+        }
+        _ => {}
     }
 }
 

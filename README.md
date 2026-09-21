@@ -11,9 +11,10 @@ does not rewrite what it receives, and never calls anything "verified".
 
 ## Status
 
-Pre-alpha. The record API accepts and returns Cards and Evals (create,
-append, read); validation beyond the record's shape, attachments, relations,
-query and the web UI are not there yet. Read the design in the crate docs:
+Pre-alpha. The API is complete: records with validation, fingerprints and
+badges, attachments, relations, the query language, the registry and the
+audit log. The web UI is being built; a binary without it serves the API and
+a placeholder page. Read the design in the crate docs:
 
 ```bash
 cargo doc --no-deps --open
@@ -83,6 +84,8 @@ covers it.
 
 | Method   | Path                              | Does                                                                     |
 | -------- | --------------------------------- | ------------------------------------------------------------------------ |
+| `POST`   | `/session`                        | Exchange a token for a session cookie: `{ token }`. The hub has no passwords, so a token is the credential. |
+| `DELETE` | `/session`                        | End the session, revoking the token its cookie carries.                  |
 | `GET`    | `/whoami`                         | The token's user, scope, namespaces and organisation roles.              |
 | `GET`    | `/tokens`                         | The caller's tokens, by prefix. Secrets are shown once, at issue.        |
 | `POST`   | `/tokens`                         | Issue one: `{ scope, namespaces[] }`, capped by the presenting token's scope and by the caller's own login and admin organisations. |
@@ -162,8 +165,30 @@ their `metric_registered` / `harness_registered` badge, on the next sweep.
 stream them through the hub, which the presigned-URL design exists to
 avoid, and the alternative has not been chosen yet.
 
-The web UI is the remaining milestone (see the `evalhub_server` crate doc,
-"Build order").
+## Web UI
+
+The single-page application in `web/` is one more client of `/api/v1`: it
+has no route the API does not have, which is what keeps the contract honest
+for everyone else. It is compiled into the binary, so a self-host is still
+one file and there is no second origin to configure.
+
+```bash
+cd web && pnpm install && pnpm build   # fills web/build
+cargo build --release -p evalhub-server
+```
+
+A checkout without `web/build` builds and runs: the asset set is empty and
+any browser path gets a placeholder that names `/openapi.json`. A debug
+build reads the files from disk at request time, so `pnpm build` shows up on
+reload; a release build bakes them in.
+
+The UI does not hold a token in JavaScript. `POST /api/v1/session` takes one
+and returns a cookie — private, `HttpOnly`, `SameSite=Strict`, and `Secure`
+unless the server binds a loopback address — carrying a second token minted
+for the same user with the same scope and namespaces. `DELETE
+/api/v1/session` revokes that one and clears the cookie, leaving the token
+that opened the session alone. Set `auth.cookie_key` in production: without
+it the key is generated per process and every session ends at a restart.
 
 ## License
 

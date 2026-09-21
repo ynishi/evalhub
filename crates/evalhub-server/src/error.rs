@@ -8,6 +8,7 @@
 //! | `NotFound`                      | 404    | empty                                 |
 //! | `Forbidden`                     | 403    | empty                                 |
 //! | `Unauthorized`                  | 401    | empty                                 |
+//! | `SessionRejected { secure }`    | 401    | empty; clears the session cookie      |
 //! | `BadRequest`                    | 400    | empty                                 |
 //! | `Unavailable(&'static str)`     | 503    | empty; a capability this deployment does not have |
 //! | `NotImplemented(&'static str)`  | 501    | empty; a format the hub has not decided on yet    |
@@ -51,6 +52,15 @@ pub enum ApiError {
     Forbidden,
     /// No token, or a token the hub does not recognise.
     Unauthorized,
+    /// The credential came from the session cookie and was refused, so the
+    /// response clears the cookie rather than leaving the browser to
+    /// present it again on every request. `secure` mirrors the flag the
+    /// cookie was set with; a browser ignores a clearing header whose
+    /// attributes do not match.
+    SessionRejected {
+        /// Whether the cookie being cleared was marked `Secure`.
+        secure: bool,
+    },
     /// The request is malformed in a way the handler detected itself
     /// (bad cursor, unparseable path segment).
     BadRequest,
@@ -78,7 +88,7 @@ impl ApiError {
             }
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::Forbidden => StatusCode::FORBIDDEN,
-            Self::Unauthorized => StatusCode::UNAUTHORIZED,
+            Self::Unauthorized | Self::SessionRejected { .. } => StatusCode::UNAUTHORIZED,
             Self::BadRequest => StatusCode::BAD_REQUEST,
             Self::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             Self::NotImplemented(_) => StatusCode::NOT_IMPLEMENTED,
@@ -131,6 +141,7 @@ impl std::fmt::Display for ApiError {
             Self::NotFound => write!(f, "not found"),
             Self::Forbidden => write!(f, "forbidden"),
             Self::Unauthorized => write!(f, "unauthorized"),
+            Self::SessionRejected { .. } => write!(f, "session rejected"),
             Self::BadRequest => write!(f, "bad request"),
             Self::Unavailable(what) => write!(f, "unavailable: {what}"),
             Self::NotImplemented(what) => write!(f, "not implemented: {what}"),
@@ -178,6 +189,16 @@ impl IntoResponse for ApiError {
             error!(error = %format!("{e:#}"), "request failed");
         }
         let status = self.status();
+        if let Self::SessionRejected { secure } = self {
+            return (
+                status,
+                [(
+                    axum::http::header::SET_COOKIE,
+                    crate::auth::cleared_session_header(secure),
+                )],
+            )
+                .into_response();
+        }
         match self.envelope() {
             Some(body) => (status, Json(body)).into_response(),
             None => status.into_response(),

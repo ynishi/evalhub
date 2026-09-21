@@ -890,6 +890,20 @@ expression: body
         ],
         "type": "object"
       },
+      "NewSessionBody": {
+        "additionalProperties": false,
+        "description": "Body of `POST /session`.",
+        "properties": {
+          "token": {
+            "description": "A token secret, the same string a client would send as\n`Authorization: Bearer …`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "type": "object"
+      },
       "NewTokenBody": {
         "additionalProperties": false,
         "description": "Body of `POST /tokens`.",
@@ -1088,6 +1102,156 @@ expression: body
         },
         "type": "object"
       },
+      "QueryFilter": {
+        "description": "A filter: a connective or a leaf.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "and": {
+                "items": {
+                  "$ref": "#/components/schemas/QueryFilter"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "and"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "or": {
+                "items": {
+                  "$ref": "#/components/schemas/QueryFilter"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "or"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "not": {
+                "$ref": "#/components/schemas/QueryFilter"
+              }
+            },
+            "required": [
+              "not"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "A scalar comparison.",
+            "properties": {
+              "op": {
+                "enum": [
+                  "eq",
+                  "ne",
+                  "gt",
+                  "gte",
+                  "lt",
+                  "lte",
+                  "in",
+                  "prefix",
+                  "contains"
+                ]
+              },
+              "path": {
+                "type": "string"
+              },
+              "value": true
+            },
+            "required": [
+              "path",
+              "op",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "The path has a value, `null` included.",
+            "properties": {
+              "op": {
+                "const": "exists"
+              },
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "op"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "At least one element of an array path satisfies every term.",
+            "properties": {
+              "match": {
+                "additionalProperties": {
+                  "description": "A literal (meaning `eq`), or an operator and a literal.",
+                  "oneOf": [
+                    {
+                      "type": [
+                        "string",
+                        "number",
+                        "boolean",
+                        "null"
+                      ]
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "op": {
+                          "enum": [
+                            "eq",
+                            "ne",
+                            "gt",
+                            "gte",
+                            "lt",
+                            "lte",
+                            "in",
+                            "prefix",
+                            "contains"
+                          ]
+                        },
+                        "value": true
+                      },
+                      "required": [
+                        "value"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                },
+                "type": "object"
+              },
+              "op": {
+                "const": "any"
+              },
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "op",
+              "match"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "QueryHitDto": {
         "description": "One matched version, with what the hub knows about it.",
         "properties": {
@@ -1225,159 +1389,7 @@ expression: body
             "description": "Which versions to search. Defaults to `latest`."
           },
           "where": {
-            "$defs": {
-              "filter": {
-                "description": "A filter: a connective or a leaf.",
-                "oneOf": [
-                  {
-                    "additionalProperties": false,
-                    "properties": {
-                      "and": {
-                        "items": {
-                          "$ref": "#/$defs/filter"
-                        },
-                        "type": "array"
-                      }
-                    },
-                    "required": [
-                      "and"
-                    ],
-                    "type": "object"
-                  },
-                  {
-                    "additionalProperties": false,
-                    "properties": {
-                      "or": {
-                        "items": {
-                          "$ref": "#/$defs/filter"
-                        },
-                        "type": "array"
-                      }
-                    },
-                    "required": [
-                      "or"
-                    ],
-                    "type": "object"
-                  },
-                  {
-                    "additionalProperties": false,
-                    "properties": {
-                      "not": {
-                        "$ref": "#/$defs/filter"
-                      }
-                    },
-                    "required": [
-                      "not"
-                    ],
-                    "type": "object"
-                  },
-                  {
-                    "additionalProperties": false,
-                    "description": "A scalar comparison.",
-                    "properties": {
-                      "op": {
-                        "enum": [
-                          "eq",
-                          "ne",
-                          "gt",
-                          "gte",
-                          "lt",
-                          "lte",
-                          "in",
-                          "prefix",
-                          "contains"
-                        ]
-                      },
-                      "path": {
-                        "type": "string"
-                      },
-                      "value": true
-                    },
-                    "required": [
-                      "path",
-                      "op",
-                      "value"
-                    ],
-                    "type": "object"
-                  },
-                  {
-                    "additionalProperties": false,
-                    "description": "The path has a value, `null` included.",
-                    "properties": {
-                      "op": {
-                        "const": "exists"
-                      },
-                      "path": {
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "path",
-                      "op"
-                    ],
-                    "type": "object"
-                  },
-                  {
-                    "additionalProperties": false,
-                    "description": "At least one element of an array path satisfies every term.",
-                    "properties": {
-                      "match": {
-                        "additionalProperties": {
-                          "description": "A literal (meaning `eq`), or an operator and a literal.",
-                          "oneOf": [
-                            {
-                              "type": [
-                                "string",
-                                "number",
-                                "boolean",
-                                "null"
-                              ]
-                            },
-                            {
-                              "additionalProperties": false,
-                              "properties": {
-                                "op": {
-                                  "enum": [
-                                    "eq",
-                                    "ne",
-                                    "gt",
-                                    "gte",
-                                    "lt",
-                                    "lte",
-                                    "in",
-                                    "prefix",
-                                    "contains"
-                                  ]
-                                },
-                                "value": true
-                              },
-                              "required": [
-                                "value"
-                              ],
-                              "type": "object"
-                            }
-                          ]
-                        },
-                        "type": "object"
-                      },
-                      "op": {
-                        "const": "any"
-                      },
-                      "path": {
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "path",
-                      "op",
-                      "match"
-                    ],
-                    "type": "object"
-                  }
-                ]
-              }
-            },
-            "$ref": "#/$defs/filter"
+            "$ref": "#/components/schemas/QueryFilter"
           }
         },
         "type": "object"
@@ -4981,6 +4993,124 @@ expression: body
           }
         },
         "summary": "Register a definition"
+      }
+    },
+    "/api/v1/session": {
+      "delete": {
+        "description": "Revokes the token the cookie carries and clears the cookie. Answers `204` whether or not a session was open.",
+        "operationId": "delete_session",
+        "responses": {
+          "204": {
+            "description": "The session is closed and the cookie cleared."
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "End a UI session"
+      },
+      "post": {
+        "description": "Exchanges a token for a session cookie. The hub has no passwords, so the credential is a token; the cookie carries a second token minted for the same user with the same scope and namespaces, which `DELETE /session` revokes. The presented token is left alone.",
+        "operationId": "create_session",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewSessionBody"
+              }
+            }
+          },
+          "description": "Body of `POST /session`.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Whoami"
+                }
+              }
+            },
+            "description": "The session's identity, as `whoami` reports it."
+          },
+          "400": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Failed to parse the request body as JSON"
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, or the label is taken."
+          },
+          "415": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Expected request with `Content-Type: application/json`"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Open a UI session"
       }
     },
     "/api/v1/tokens": {

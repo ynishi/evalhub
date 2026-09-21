@@ -48,10 +48,12 @@ async fn whoami_is_anonymous_without_token() {
 }
 
 #[tokio::test]
-async fn unknown_api_path_is_404_and_browser_path_is_placeholder() {
+async fn unknown_api_path_is_404_and_browser_path_reaches_the_spa() {
     let (status, _) = get("/api/v1/nope").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
+    // A path the SPA routes itself: the server must answer a document, not
+    // a 404, or a reload of a deep link would break.
     let res = app()
         .oneshot(Request::get("/cards/alice/x").body(Body::empty()).unwrap())
         .await
@@ -59,6 +61,18 @@ async fn unknown_api_path_is_404_and_browser_path_is_placeholder() {
     assert_eq!(res.status(), StatusCode::OK);
     let ct = res.headers()["content-type"].to_str().unwrap().to_string();
     assert!(ct.starts_with("text/html"), "content-type was {ct}");
+
+    let bytes = to_bytes(res.into_body(), 1 << 20).await.unwrap();
+    let html = String::from_utf8_lossy(&bytes).into_owned();
+    // CI builds without `web/build`, so this is the placeholder; when a UI
+    // is built in it is `index.html` instead, and either way the document
+    // has to say where the contract is or point at a script that does.
+    if html.contains("not built into this binary") {
+        assert!(html.contains("/openapi.json"), "{html}");
+        assert!(html.contains("pnpm build"), "{html}");
+    } else {
+        assert!(html.contains("<script"), "a built SPA loads its bundle");
+    }
 }
 
 #[tokio::test]

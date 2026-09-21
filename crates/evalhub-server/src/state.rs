@@ -3,8 +3,11 @@
 use std::sync::Arc;
 
 use aide::openapi::OpenApi;
+use axum::extract::FromRef;
+use axum_extra::extract::cookie::Key;
 use evalhub_query::typecheck::{ExtSchema, PathTable};
 use evalhub_schema::RecordKind;
+use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
 
 use crate::auth::CursorSigner;
@@ -77,6 +80,82 @@ impl Default for PathTableHandle {
     }
 }
 
+/// The key the UI session cookie is encrypted with, and whether that
+/// cookie is marked `Secure`.
+///
+/// `auth.cookie_key` is hashed to 32 bytes and expanded into the
+/// signing and encryption halves `axum-extra` wants, the same treatment
+/// [`CursorSigner`] gives `auth.cursor_key`. With no key configured the
+/// process generates one, and every session ends when it restarts.
+///
+/// `Secure` tells the browser to send the cookie over HTTPS only, which
+/// would make it invisible to a developer running `evalhub serve` on
+/// `127.0.0.1`. The flag is therefore set unless `bind` is a loopback
+/// address: a hub reachable from another machine gets it, a local one
+/// does not. A deployment behind a proxy binds a routable address (or
+/// `0.0.0.0`) and is covered.
+#[derive(Clone)]
+pub struct CookieKey {
+    key: Key,
+    secure: bool,
+}
+
+impl std::fmt::Debug for CookieKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CookieKey")
+            .field("key", &"[redacted]")
+            .field("secure", &self.secure)
+            .finish()
+    }
+}
+
+impl CookieKey {
+    /// From `auth.cookie_key` (any length; it is hashed) and the address
+    /// the server binds. `None` generates a key for this process only.
+    pub fn new(configured: Option<&str>, bind: &str) -> Self {
+        let key = match configured {
+            Some(k) => {
+                let seed: [u8; 32] = Sha256::digest(k.as_bytes()).into();
+                Key::derive_from(&seed)
+            }
+            None => Key::generate(),
+        };
+        Self {
+            key,
+            secure: !binds_loopback(bind),
+        }
+    }
+
+    /// Whether the session cookie should carry `Secure`.
+    pub fn secure(&self) -> bool {
+        self.secure
+    }
+}
+
+/// Whether `bind` names an address only this machine can reach.
+///
+/// A value that is not an address at all — a host name, or something
+/// malformed — is treated as reachable, so the doubtful case gets the
+/// stricter flag rather than the convenient one.
+fn binds_loopback(bind: &str) -> bool {
+    // The configured form, `127.0.0.1:8080` or `[::1]:8080`.
+    if let Ok(addr) = bind.parse::<std::net::SocketAddr>() {
+        return addr.ip().is_loopback();
+    }
+    // A bare address, which `TcpListener::bind` would refuse, read here
+    // anyway so the flag does not hinge on a port being present.
+    if let Ok(ip) = bind.parse::<std::net::IpAddr>() {
+        return ip.is_loopback();
+    }
+    false
+}
+
+impl FromRef<AppState> for Key {
+    fn from_ref(state: &AppState) -> Self {
+        state.cookie_key.key.clone()
+    }
+}
+
 /// Cloned into each handler by axum. Everything inside is cheap to clone.
 #[derive(Clone)]
 pub struct AppState {
@@ -93,6 +172,8 @@ pub struct AppState {
     pub openapi: Arc<OpenApi>,
     /// Signs pagination cursors with `auth.cursor_key`.
     pub cursors: CursorSigner,
+    /// Encrypts the UI session cookie with `auth.cookie_key`.
+    pub cookie_key: CookieKey,
     /// The query vocabulary, swapped when an `ext_schema` is applied.
     pub path_tables: PathTableHandle,
 }
@@ -113,5 +194,39 @@ impl AppState {
         self.objects
             .as_deref()
             .ok_or(ApiError::Unavailable("object storage is not configured"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn secure_follows_the_bind_address() {
+        // A hub only this machine can reach is usually plain http, and a
+        // `Secure` cookie would never be sent back to it.
+        for local in ["127.0.0.1:8080", "[::1]:8080", "127.0.0.1", "::1"] {
+            assert!(!CookieKey::new(None, local).secure(), "{local} is loopback");
+        }
+        // Anything reachable from elsewhere gets the flag, including the
+        // wildcard and a host name the server cannot resolve here.
+        for remote in ["0.0.0.0:8080", "10.0.0.4:8080", "hub.example:443", ""] {
+            assert!(
+                CookieKey::new(None, remote).secure(),
+                "{remote} is not loopback"
+            );
+        }
+    }
+
+    #[test]
+    fn a_configured_key_is_stable_and_an_absent_one_is_not() {
+        let a = CookieKey::new(Some("shared"), "127.0.0.1:8080");
+        let b = CookieKey::new(Some("shared"), "127.0.0.1:8080");
+        assert_eq!(a.key.master(), b.key.master(), "sessions survive a restart");
+        let c = CookieKey::new(Some("other"), "127.0.0.1:8080");
+        assert_ne!(a.key.master(), c.key.master());
+        let d = CookieKey::new(None, "127.0.0.1:8080");
+        let e = CookieKey::new(None, "127.0.0.1:8080");
+        assert_ne!(d.key.master(), e.key.master(), "generated per process");
     }
 }

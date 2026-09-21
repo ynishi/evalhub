@@ -63,6 +63,20 @@
 //! `SameSite=Strict`. The API accepts either the header or the cookie, and
 //! treats them identically after extraction.
 //!
+//! The credential the hub can check is a token, because there are no
+//! passwords: `POST /session` takes one, mints a second token for the same
+//! user with the same scope and namespaces, and puts *that* one in the
+//! cookie. The presented token is never stored anywhere new, and
+//! `DELETE /session` revokes the minted one, so closing a session cannot
+//! disturb the token the operator pasted in to open it.
+//!
+//! Precedence: an `Authorization` header wins. The cookie is read only
+//! when there is no header, which keeps a browser's ambient cookie from
+//! quietly overriding a deliberate header on the same origin. A cookie
+//! that does not decrypt is treated as absent — it was signed by another
+//! key, most likely this process's predecessor — while one that decrypts
+//! to a token the hub refuses is `401`, like any other bad credential.
+//!
 //! # Cursors
 //!
 //! Pagination cursors are keyset tuples, serialised, HMAC-signed with
@@ -80,8 +94,9 @@
 use std::collections::BTreeMap;
 
 use aide::OperationInput;
-use axum::extract::FromRequestParts;
+use axum::extract::{FromRef, FromRequestParts};
 use axum::http::request::Parts;
+use axum_extra::extract::cookie::{Cookie, Key, PrivateCookieJar, SameSite};
 use base64::Engine;
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Digest, Sha256};
@@ -202,6 +217,9 @@ pub fn hash_secret(secret: &str) -> [u8; 32] {
     Sha256::digest(secret.as_bytes()).into()
 }
 
+/// Name of the private cookie the UI session lives in.
+pub const SESSION_COOKIE: &str = "evalhub_session";
+
 fn bearer(parts: &Parts) -> Result<Option<&str>, ApiError> {
     let Some(value) = parts.headers.get(axum::http::header::AUTHORIZATION) else {
         return Ok(None);
@@ -215,6 +233,84 @@ fn bearer(parts: &Parts) -> Result<Option<&str>, ApiError> {
         return Err(ApiError::Unauthorized);
     }
     Ok(Some(secret))
+}
+
+/// The session cookie's token, if the request carries one this key can
+/// decrypt. A cookie encrypted with another key reads as absent.
+fn session_cookie(parts: &Parts, state: &AppState) -> Option<String> {
+    let key = Key::from_ref(state);
+    PrivateCookieJar::from_headers(&parts.headers, key)
+        .get(SESSION_COOKIE)
+        .map(|cookie| cookie.value().to_owned())
+        .filter(|secret| !secret.is_empty())
+}
+
+/// Where a request's credential came from. A cookie that is refused
+/// clears itself; a header that is refused does not, because nothing on
+/// the client side would notice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Source {
+    Header,
+    Cookie,
+}
+
+/// The credential a request presents: the header if there is one, the
+/// session cookie otherwise.
+fn credential(parts: &Parts, state: &AppState) -> Result<Option<(String, Source)>, ApiError> {
+    match bearer(parts)? {
+        Some(secret) => Ok(Some((secret.to_owned(), Source::Header))),
+        None => Ok(session_cookie(parts, state).map(|s| (s, Source::Cookie))),
+    }
+}
+
+/// Resolve a credential, turning a refusal of a cookie into the variant
+/// that clears it.
+async fn resolve_from(
+    state: &AppState,
+    secret: &str,
+    source: Source,
+) -> Result<Identity, ApiError> {
+    match resolve(state, secret).await {
+        Err(ApiError::Unauthorized) if source == Source::Cookie => Err(ApiError::SessionRejected {
+            secure: state.cookie_key.secure(),
+        }),
+        other => other,
+    }
+}
+
+/// The session cookie carrying `secret`, with the flags the design asks
+/// for. `Secure` follows [`crate::state::CookieKey::secure`].
+pub fn session_cookie_for(secret: String, secure: bool) -> Cookie<'static> {
+    let mut cookie = Cookie::new(SESSION_COOKIE, secret);
+    cookie.set_http_only(true);
+    cookie.set_same_site(SameSite::Strict);
+    cookie.set_path("/");
+    cookie.set_secure(secure);
+    cookie
+}
+
+/// The cookie to hand back when a session ends or its credential is
+/// refused: same name and path, so the browser drops the one it holds.
+pub fn cleared_session_cookie(secure: bool) -> Cookie<'static> {
+    session_cookie_for(String::new(), secure)
+}
+
+/// The `Set-Cookie` value that deletes the session cookie.
+///
+/// Written out rather than rendered from a [`Cookie`], because the result
+/// is known at compile time and a header built at run time would need a
+/// fallible conversion with no sensible failure branch. The attributes
+/// match [`session_cookie_for`]; a browser ignores a deletion whose
+/// attributes do not.
+pub fn cleared_session_header(secure: bool) -> axum::http::HeaderValue {
+    const CLEARED: &str = "evalhub_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0";
+    const CLEARED_SECURE: &str =
+        "evalhub_session=; HttpOnly; SameSite=Strict; Path=/; Secure; Max-Age=0";
+    if secure {
+        axum::http::HeaderValue::from_static(CLEARED_SECURE)
+    } else {
+        axum::http::HeaderValue::from_static(CLEARED)
+    }
 }
 
 async fn resolve(state: &AppState, secret: &str) -> Result<Identity, ApiError> {
@@ -325,10 +421,10 @@ impl FromRequestParts<AppState> for MaybeAuth {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, ApiError> {
-        match bearer(parts)? {
+        match credential(parts, state)? {
             None => Ok(MaybeAuth(Caller::ANONYMOUS)),
-            Some(secret) => Ok(MaybeAuth(Caller {
-                identity: Some(resolve(state, secret).await?),
+            Some((secret, source)) => Ok(MaybeAuth(Caller {
+                identity: Some(resolve_from(state, &secret, source).await?),
             })),
         }
     }
@@ -344,9 +440,9 @@ impl FromRequestParts<AppState> for Auth {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, ApiError> {
-        let secret = bearer(parts)?.ok_or(ApiError::Unauthorized)?;
+        let (secret, source) = credential(parts, state)?.ok_or(ApiError::Unauthorized)?;
         Ok(Auth(Caller {
-            identity: Some(resolve(state, secret).await?),
+            identity: Some(resolve_from(state, &secret, source).await?),
         }))
     }
 }
