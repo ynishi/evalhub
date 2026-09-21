@@ -32,7 +32,7 @@
 //! s3.allow_http   = false                      presigning over plain http (local MinIO)
 //! s3.presign_ttl_secs = 900
 //! auth.cursor_key =                            secret, HMAC key for cursors; random per process if unset
-//! auth.cookie_key =                            secret, private-cookie key for the UI
+//! auth.cookie_key =                            secret, private-cookie key for the UI session; random per process if unset, which ends every session on restart
 //! attachments.hash_verify_max_bytes = 268435456
 //! jobs.gc_grace_secs = 86400
 //! log.format      = "text" | "json"

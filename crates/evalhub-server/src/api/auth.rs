@@ -4,6 +4,8 @@
 //!
 //! | Endpoint                          | Who may call it                                   |
 //! | --------------------------------- | ------------------------------------------------- |
+//! | `POST /session`                   | anyone holding a token; opens a UI session        |
+//! | `DELETE /session`                 | the session's own cookie                          |
 //! | `GET /tokens`                     | any token; lists its owner's tokens               |
 //! | `POST /tokens`                    | any token; see the namespace rule below           |
 //! | `DELETE /tokens/{token_id}`       | the owner of that token                           |
@@ -23,12 +25,14 @@ use aide::axum::IntoApiResponse;
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
+use axum_extra::extract::PrivateCookieJar;
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use evalhub_store::auth::{self as store_auth, NamespaceKind, Scope};
 
+use crate::api::meta::Whoami;
 use crate::auth::{Auth, MaybeAuth};
 use crate::error::ApiError;
 use crate::state::AppState;
@@ -359,6 +363,80 @@ pub async fn remove_member(
     } else {
         Err(ApiError::NotFound)
     }
+}
+
+/// Body of `POST /session`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NewSessionBody {
+    /// A token secret, the same string a client would send as
+    /// `Authorization: Bearer …`.
+    pub token: String,
+}
+
+/// `POST /api/v1/session` — exchange a token for a session cookie.
+///
+/// The hub has no passwords, so the credential it can check is a token.
+/// The presented one is validated exactly as the bearer header is, and
+/// then a *second* token is minted for the same user with the same scope
+/// and the same namespaces; that one goes into the cookie. The token the
+/// operator pasted in is untouched, so ending the session cannot revoke
+/// it.
+pub async fn create_session(
+    State(state): State<AppState>,
+    jar: PrivateCookieJar,
+    Json(body): Json<NewSessionBody>,
+) -> Result<(PrivateCookieJar, Json<Whoami>), ApiError> {
+    let pool = state.db()?;
+    let presented = crate::auth::hash_secret(&body.token);
+    let row = store_auth::find_token(pool, &presented)
+        .await?
+        .ok_or(ApiError::Unauthorized)?;
+    if row.revoked_at.is_some() {
+        return Err(ApiError::Unauthorized);
+    }
+
+    let (secret, hash) = crate::auth::new_secret();
+    store_auth::create_token(pool, row.user_id, row.scope, &row.namespaces, &hash).await?;
+    let jar = jar.add(crate::auth::session_cookie_for(
+        secret,
+        state.cookie_key.secure(),
+    ));
+    Ok((
+        jar,
+        Json(Whoami {
+            user: Some(row.login),
+            namespaces: row.namespaces,
+            scope: Some(row.scope.as_str().to_string()),
+        }),
+    ))
+}
+
+/// `DELETE /api/v1/session` — end the session.
+///
+/// Revokes the token the cookie carries and clears the cookie. A request
+/// without a session cookie is still `204`: the caller's wish, that no
+/// session remain, already holds.
+pub async fn delete_session(
+    State(state): State<AppState>,
+    jar: PrivateCookieJar,
+) -> Result<(PrivateCookieJar, StatusCode), ApiError> {
+    let secure = state.cookie_key.secure();
+    if let Some(cookie) = jar.get(crate::auth::SESSION_COOKIE) {
+        let pool = state.db()?;
+        let hash = crate::auth::hash_secret(cookie.value());
+        if let Some(row) = store_auth::find_token(pool, &hash).await? {
+            let actor = evalhub_store::records::Actor {
+                user_id: Some(row.user_id),
+                token_id: Some(row.token_id),
+            };
+            store_auth::revoke_token(pool, row.user_id, row.token_id, actor).await?;
+        }
+    }
+    Ok((
+        jar.remove(crate::auth::cleared_session_cookie(secure)),
+        StatusCode::NO_CONTENT,
+    ))
 }
 
 /// Keeps `IntoApiResponse` in scope for the handlers above that return

@@ -1,0 +1,7 @@
+build
+.svelte-kit
+node_modules
+pnpm-lock.yaml
+# Generated from the hub's OpenAPI document; its formatting is the
+# generator's business, not this repository's.
+src/lib/api/schema.d.ts
