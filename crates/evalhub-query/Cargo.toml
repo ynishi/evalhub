@@ -17,7 +17,9 @@ workspace = true
 [dependencies]
 evalhub-schema.workspace = true
 evalhub-core.workspace = true
-dsl-kit.workspace = true
+dsl-kit-macros.workspace = true
+dsl-kit-schema.workspace = true
+dsl-kit-parse.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

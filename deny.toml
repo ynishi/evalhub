@@ -24,7 +24,6 @@ allow = [
     "MPL-2.0",
     "CC0-1.0",
     "Unlicense",
-    "OpenSSL",
     "MIT-0",                 # borrow-or-share (via jsonschema)
     "CDLA-Permissive-2.0",   # webpki-roots: Mozilla root certificate data
 ]
