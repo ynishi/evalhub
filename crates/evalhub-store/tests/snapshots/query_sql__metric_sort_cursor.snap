@@ -1,0 +1,5 @@
+---
+source: crates/evalhub-store/tests/query_sql.rs
+expression: render(&query)
+---
+SELECT r.id AS record_id, r.ns, r.name, r.visibility, v.version_id, v.seq, v.label, v.content_hash, v.created_at, v.changed, v.badges, v.body, v.title, s0.value AS k0, v.created_at AS k1 FROM records r JOIN versions v ON v.record_id = r.id LEFT JOIN LATERAL (SELECT value FROM results WHERE version_id = v.version_id AND metric = $1 ORDER BY value DESC LIMIT 1) s0 ON true WHERE r.type = $2 AND (r.visibility = 'public' OR r.ns = ANY($3)) AND v.tombstoned_at IS NULL AND v.seq = (SELECT max(seq) FROM versions v2 WHERE v2.record_id = v.record_id AND v2.tombstoned_at IS NULL) AND (s0.value, v.created_at, v.version_id) < ($4, $5, $6) ORDER BY s0.value DESC, v.created_at DESC, v.version_id DESC LIMIT $7

@@ -125,8 +125,45 @@ not enough to learn what it is. That is what lets a public Card cite a
 private Eval. The comparison view lines Cards up and labels which axes
 agree; it does not rank them.
 
-The query language, the registry and the web UI are the remaining
-milestones (see the `evalhub_server` crate doc, "Build order").
+### Search, registry and export
+
+| Method | Path                                    | Does                                                                          |
+| ------ | --------------------------------------- | ------------------------------------------------------------------------------ |
+| `POST` | `/{cards\|evals}/query`                 | A typed filter over the record schema. Body is `{ where, sort, limit, cursor, expand, version }`; the grammar is in `GET /schemas/query`. |
+| `GET`  | `/registry/{kind}?ns&limit&offset`      | The vocabulary: `metrics`, `harnesses`, `relation_types`, `ext_schemas`.       |
+| `GET`  | `/registry/{kind}/{ns}/{id}@{version}`  | One entry.                                                                     |
+| `PUT`  | `/registry/{kind}/{ns}/{id}@{version}`  | Register one; `write` on `ns`, `core/` is read-only, entries are immutable. An `ext_schemas` entry answers `202` while its indexes build. |
+| `GET`  | `/{cards\|evals}/{ns}/{name}[@…]/export?format=` | `hf-model-index` projects a Card onto the YAML a Hugging Face model card embeds. |
+
+A query is checked before it runs. Every path is looked up in the record
+schema, so a typo is `422 unknown_path` rather than an empty page — an
+empty page for a typo looks like data. Every operator is checked against
+what an index can serve, so a range over a key with no index of its own
+is `422 not_indexed` rather than a sequential scan that works until the
+table grows. What the check accepts is:
+
+| Operator                 | On                            |
+| ------------------------ | ----------------------------- |
+| `eq`, `ne`, `in`         | any scalar path               |
+| `gt`, `gte`, `lt`, `lte` | numbers and strings, indexed  |
+| `prefix`, `contains`     | strings, indexed              |
+| `exists`                 | any path                      |
+| `any` with `match`       | `results`, `relations`, `attachments` |
+
+The registry is what turns a guess into a declaration. An extension key
+under `ext.{ns}/{name}` answers equality from the index over the whole
+record; registering an `ext_schemas` entry for it builds a typed index and
+makes it rangeable and sortable. A metric can be sorted on only once it is
+registered, because `lower_is_better` is what says which way is up.
+Registering a metric or a harness also earns the records that cite it
+their `metric_registered` / `harness_registered` badge, on the next sweep.
+
+`export?format=bundle` is `501`: tarring a record's attachments would
+stream them through the hub, which the presigned-URL design exists to
+avoid, and the alternative has not been chosen yet.
+
+The web UI is the remaining milestone (see the `evalhub_server` crate doc,
+"Build order").
 
 ## License
 

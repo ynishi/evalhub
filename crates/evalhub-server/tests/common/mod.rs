@@ -33,6 +33,10 @@ pub struct Hub {
     _minio: Option<ContainerAsync<GenericImage>>,
     pub pool: PgPool,
     pub app: axum::Router,
+    /// The query vocabulary the router reads. Tests that register an
+    /// extension schema run the index job and then rebuild it, which is
+    /// what `serve` does on its own timer.
+    pub path_tables: evalhub_server::state::PathTableHandle,
 }
 
 /// MinIO image. `minio/minio` on Docker Hub is no longer pullable; the
@@ -98,13 +102,34 @@ impl Hub {
             (None, None)
         };
 
-        let app = router(Arc::new(config), Some(pool.clone()), objects);
+        let path_tables = evalhub_server::state::PathTableHandle::from_schema();
+        let app = router(
+            Arc::new(config),
+            Some(pool.clone()),
+            objects,
+            path_tables.clone(),
+        );
         Self {
             _container: container,
             _minio: minio,
             pool,
             app,
+            path_tables,
         }
+    }
+
+    /// Run the index builder once and republish the query vocabulary, as
+    /// the background job does.
+    pub async fn apply_ext_schemas(&self) {
+        evalhub_store::index::apply_pending(&self.pool)
+            .await
+            .expect("apply pending ext schemas");
+        let entries = evalhub_store::registry::ext_schemas_applied(&self.pool)
+            .await
+            .expect("load applied ext schemas");
+        self.path_tables
+            .rebuild(&evalhub_server::jobs::to_query_ext(&entries))
+            .await;
     }
 
     /// Mark every attachment a fixture declares as uploaded and confirmed.
@@ -166,6 +191,29 @@ impl Hub {
         let bytes = to_bytes(res.into_body(), 1 << 20).await.unwrap();
         let json = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
         (status, json)
+    }
+
+    /// Like [`Hub::call`] but keeps the body as text, for responses that
+    /// are not JSON.
+    pub async fn call_text(
+        &self,
+        method: Method,
+        path: &str,
+        token: Option<&str>,
+    ) -> (StatusCode, String) {
+        let mut req = Request::builder().method(method).uri(path);
+        if let Some(t) = token {
+            req = req.header(header::AUTHORIZATION, format!("Bearer {t}"));
+        }
+        let res = self
+            .app
+            .clone()
+            .oneshot(req.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let status = res.status();
+        let bytes = to_bytes(res.into_body(), 1 << 20).await.unwrap();
+        (status, String::from_utf8_lossy(&bytes).into_owned())
     }
 }
 

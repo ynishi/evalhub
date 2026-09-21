@@ -1,0 +1,60 @@
+{
+  "where": {
+    "and": [
+      {
+        "path": "model.id",
+        "op": "eq",
+        "value": "qwen3.6-32b"
+      },
+      {
+        "path": "generation.temperature",
+        "op": "lte",
+        "value": 0.2
+      },
+      {
+        "path": "results",
+        "op": "any",
+        "match": {
+          "metric": "core/pass_rate",
+          "value": {
+            "op": "gte",
+            "value": 0.5
+          }
+        }
+      },
+      {
+        "path": "relations",
+        "op": "any",
+        "match": {
+          "type": "core/uses_eval",
+          "to": "alice/single2-k4"
+        }
+      },
+      {
+        "path": "fingerprint.generation",
+        "op": "eq",
+        "value": "3b1f"
+      },
+      {
+        "path": "ext.alice/qwen-loop.rung",
+        "op": "eq",
+        "value": 4
+      }
+    ]
+  },
+  "sort": [
+    {
+      "path": "results[core/pass_rate].value",
+      "dir": "desc"
+    }
+  ],
+  "limit": 50,
+  "cursor": null,
+  "expand": [
+    "relations",
+    "badges",
+    "fingerprints",
+    "changed"
+  ],
+  "version": "latest"
+}

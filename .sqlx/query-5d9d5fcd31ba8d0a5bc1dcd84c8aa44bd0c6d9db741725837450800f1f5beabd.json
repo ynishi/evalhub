@@ -1,0 +1,64 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT ns, id, version, body FROM registry\n         WHERE kind = 'ext_schemas' AND state = $1\n         ORDER BY ns, id, version",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "ns",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "registry",
+            "name": "ns"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "registry",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "version",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "registry",
+            "name": "version"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "body",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "registry",
+            "name": "body"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "5d9d5fcd31ba8d0a5bc1dcd84c8aa44bd0c6d9db741725837450800f1f5beabd"
+}

@@ -1,0 +1,113 @@
+---
+source: crates/evalhub-query/tests/compile.rs
+expression: query
+---
+{
+  "record_type": "card",
+  "filter": {
+    "and": [
+      {
+        "cmp": {
+          "column": {
+            "generated": "model_id"
+          },
+          "op": "eq",
+          "value": "qwen3.6-32b"
+        }
+      },
+      {
+        "cmp": {
+          "column": {
+            "generated": "gen_temperature"
+          },
+          "op": "lte",
+          "value": 0.2
+        }
+      },
+      {
+        "any": {
+          "table": "results",
+          "conditions": [
+            {
+              "column": {
+                "array": "result_metric"
+              },
+              "op": "eq",
+              "value": "core/pass_rate"
+            },
+            {
+              "column": {
+                "array": "result_value"
+              },
+              "op": "gte",
+              "value": 0.5
+            }
+          ]
+        }
+      },
+      {
+        "any": {
+          "table": "relations",
+          "conditions": [
+            {
+              "column": {
+                "array": "relation_to"
+              },
+              "op": "eq",
+              "value": "alice/single2-k4"
+            },
+            {
+              "column": {
+                "array": "relation_type"
+              },
+              "op": "eq",
+              "value": "core/uses_eval"
+            }
+          ]
+        }
+      },
+      {
+        "cmp": {
+          "column": {
+            "fingerprint": "generation"
+          },
+          "op": "eq",
+          "value": "3b1f"
+        }
+      },
+      {
+        "cmp": {
+          "column": {
+            "ext": {
+              "path": [
+                "ext",
+                "alice/qwen-loop",
+                "rung"
+              ],
+              "ty": "number"
+            }
+          },
+          "op": "eq",
+          "value": 4
+        }
+      }
+    ]
+  },
+  "sort": [
+    {
+      "key": {
+        "metric": "core/pass_rate"
+      },
+      "dir": "desc"
+    }
+  ],
+  "limit": 50,
+  "cursor": null,
+  "expand": [
+    "relations",
+    "badges",
+    "fingerprints",
+    "changed"
+  ],
+  "version": "latest"
+}

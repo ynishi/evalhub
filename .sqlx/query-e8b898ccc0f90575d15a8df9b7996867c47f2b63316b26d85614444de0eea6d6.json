@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT r.version_id FROM results r\n         JOIN versions v ON v.version_id = r.version_id\n         WHERE v.tombstoned_at IS NULL AND r.metric = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "version_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "results",
+            "name": "version_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "e8b898ccc0f90575d15a8df9b7996867c47f2b63316b26d85614444de0eea6d6"
+}

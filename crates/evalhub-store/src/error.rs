@@ -109,6 +109,34 @@ pub enum StoreError {
     /// every missing digest, in the order they appeared.
     #[error("{} attachment(s) not ready", .0.len())]
     AttachmentMissing(Vec<[u8; 32]>),
+
+    /// The query IR asked for something this backend cannot render: a
+    /// column it does not know, an operator the column does not support,
+    /// a cursor that does not match the sort. The type check in
+    /// `evalhub_query` rejects these first; reaching here means the two
+    /// disagree, so the message names what could not be rendered.
+    #[error("query cannot be compiled: {0}")]
+    QueryUnsupported(String),
+
+    /// A registry entry already exists at that address. Entries are
+    /// immutable; a change is a new `@{version}`.
+    #[error("registry entry {0} already exists")]
+    RegistryEntryExists(String),
+
+    /// A write addressed the `core/` namespace, which ships with the hub
+    /// and is read-only over the API.
+    #[error("the core registry is read-only")]
+    RegistryCoreReadOnly,
+
+    /// A read or a state change addressed a registry entry that does not
+    /// exist.
+    #[error("registry entry {0} does not exist")]
+    RegistryEntryNotFound(String),
+
+    /// An `ext_schema` body was not shaped like a JSON Schema this hub can
+    /// derive typed paths from.
+    #[error("ext_schema {0} cannot be indexed: {1}")]
+    ExtSchemaInvalid(String, String),
 }
 
 impl From<sqlx::Error> for StoreError {

@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE registry SET state = $5\n         WHERE kind = $1 AND ns = $2 AND id = $3 AND version = $4",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c4bc4f4441cc361eafe40798421db9704059242c1d4a5eb43d667aebbd803e73"
+}

@@ -10,6 +10,8 @@
 //! | `Unauthorized`                  | 401    | empty                                 |
 //! | `BadRequest`                    | 400    | empty                                 |
 //! | `Unavailable(&'static str)`     | 503    | empty; a capability this deployment does not have |
+//! | `NotImplemented(&'static str)`  | 501    | empty; a format the hub has not decided on yet    |
+//! | `RegistryEntryExists(String)`   | 409    | `{ errors: [{ code: registry_entry_exists }] }`   |
 //! | `Internal(anyhow::Error)`       | 500    | empty; logged with `error!`           |
 //!
 //! Domain errors from the library crates (`thiserror` enums) convert into
@@ -56,6 +58,12 @@ pub enum ApiError {
     /// store. Not a fault of the request, and not a bug — a deployment
     /// that left the capability out.
     Unavailable(&'static str),
+    /// A format or capability the hub has not decided on yet. The hint
+    /// says what the open question is.
+    NotImplemented(&'static str),
+    /// A registry address that is already taken. Entries are immutable,
+    /// so a correction is a new version rather than a second write.
+    RegistryEntryExists(String),
     /// Anything the hub did not expect. Logged; the body is empty.
     Internal(anyhow::Error),
 }
@@ -73,6 +81,8 @@ impl ApiError {
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::BadRequest => StatusCode::BAD_REQUEST,
             Self::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            Self::NotImplemented(_) => StatusCode::NOT_IMPLEMENTED,
+            Self::RegistryEntryExists(_) => StatusCode::CONFLICT,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -97,6 +107,15 @@ impl ApiError {
                     hint: Some(format!("`{ns}` is already a user or an organisation")),
                 }],
             }),
+            Self::RegistryEntryExists(address) => Some(ErrorEnvelope {
+                errors: vec![ErrorEntry {
+                    path: String::new(),
+                    code: ErrorCode::RegistryEntryExists,
+                    hint: Some(format!(
+                        "`{address}` is registered; a correction is a new version"
+                    )),
+                }],
+            }),
             _ => None,
         }
     }
@@ -114,6 +133,8 @@ impl std::fmt::Display for ApiError {
             Self::Unauthorized => write!(f, "unauthorized"),
             Self::BadRequest => write!(f, "bad request"),
             Self::Unavailable(what) => write!(f, "unavailable: {what}"),
+            Self::NotImplemented(what) => write!(f, "not implemented: {what}"),
+            Self::RegistryEntryExists(address) => write!(f, "registry entry exists: {address}"),
             Self::Internal(e) => write!(f, "internal error: {e:#}"),
         }
     }
@@ -136,6 +157,9 @@ impl From<StoreError> for ApiError {
             // A namespace the hub does not know cannot be written to by
             // anyone; the caller's token would not cover it either, so the
             // answer is the same as for a namespace they may not see.
+            StoreError::RegistryCoreReadOnly => Self::Forbidden,
+            StoreError::RegistryEntryExists(address) => Self::RegistryEntryExists(address),
+            StoreError::RegistryEntryNotFound(_) => Self::NotFound,
             StoreError::NamespaceUnknown(_)
             | StoreError::NotAnOrganisation(_)
             | StoreError::RecordNotFound

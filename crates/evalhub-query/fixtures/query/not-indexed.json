@@ -1,0 +1,7 @@
+{
+  "where": {
+    "path": "ext.bob/unregistered.k",
+    "op": "gte",
+    "value": "x"
+  }
+}

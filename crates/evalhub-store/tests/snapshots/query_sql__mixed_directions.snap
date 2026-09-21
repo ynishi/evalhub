@@ -1,0 +1,5 @@
+---
+source: crates/evalhub-store/tests/query_sql.rs
+expression: sql
+---
+SELECT r.id AS record_id, r.ns, r.name, r.visibility, v.version_id, v.seq, v.label, v.content_hash, v.created_at, v.changed, v.badges, v.body, v.title, v.model_id AS k0, v.gen_temperature AS k1 FROM records r JOIN versions v ON v.record_id = r.id WHERE r.type = $1 AND (r.visibility = 'public' OR r.ns = ANY($2)) AND v.tombstoned_at IS NULL AND v.seq = (SELECT max(seq) FROM versions v2 WHERE v2.record_id = v.record_id AND v2.tombstoned_at IS NULL) AND ((v.model_id > $3) OR (v.model_id = $4 AND v.gen_temperature < $5) OR (v.model_id = $6 AND v.gen_temperature = $7 AND v.version_id < $8)) ORDER BY v.model_id ASC, v.gen_temperature DESC, v.version_id DESC LIMIT $9

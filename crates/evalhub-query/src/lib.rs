@@ -33,11 +33,17 @@
 //!
 //! # The grammar is the specification
 //!
-//! The query language is defined as a `dsl-kit` grammar. There is no
-//! hand-written `match` over operator names anywhere in the workspace; the
-//! grammar definition is the source, and the parser, the JSON Schema for the
-//! request body, and the error messages are all derived from it. When an
-//! operator is added it is added once.
+//! The filter AST is a `dsl-kit` enum, and the conformance check, the typed
+//! builder and the published JSON Schema of the `where` value all come from
+//! it. The operator vocabulary in particular is declared once, as
+//! [`grammar::ScalarOp`]: adding an operator is a variant plus its row in
+//! the type table, and no parser arm changes.
+//!
+//! What *is* hand-written is the lowering from the wire shape
+//! (`{"and": [...]}`) into the tagged shape `dsl-kit`'s JSON front end reads
+//! (`{"type": "And", …}`), which names the five node shapes. See the
+//! [`grammar`] module doc for why that is a shape concern rather than a
+//! vocabulary one.
 //!
 //! # The path table is projected from the schema
 //!
@@ -67,12 +73,15 @@
 //!
 //! # Index awareness
 //!
-//! The type check also knows which paths are indexed: core facet keys,
-//! fingerprints, `results`, `relations`, and `ext` paths whose `ext_schema`
-//! is `applied`. An unregistered `ext` path accepts `eq` and `exists` only
-//! (the store serves those from a GIN index over the JSON body); any other
-//! operator is `422 not_indexed` with a hint naming the registry. This
-//! keeps a query from silently becoming a sequential scan.
+//! The type check also knows which paths are indexed: the sixteen facet
+//! keys the migration materialises as generated columns, the fingerprints,
+//! and the `results` / `relations` / `attachments` side tables, plus `ext`
+//! paths whose `ext_schema` is `applied`. Every other path — an
+//! unregistered `ext` key, and equally a facet key with no column of its
+//! own — accepts `eq` and `exists` only, which is what the GIN index over
+//! the JSON body answers; any other operator is `422 not_indexed` with a
+//! hint naming the registry. This keeps a query from silently becoming a
+//! sequential scan.
 //!
 //! # Sorting and cursors
 //!
@@ -93,3 +102,7 @@
 pub mod grammar;
 pub mod ir;
 pub mod typecheck;
+
+pub use grammar::{Filter, MatchTerm, ScalarOp, parse, request_schema};
+pub use ir::Query;
+pub use typecheck::{ExtSchema, Indexed, PathInfo, PathTable, check, compile};

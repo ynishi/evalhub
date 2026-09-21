@@ -152,8 +152,13 @@ async fn badges_report_what_the_hub_checked() {
     assert!(badges.contains(&"redacted".to_string()), "{badges:?}");
     assert!(!badges.contains(&"refs_resolved".to_string()), "{badges:?}");
     assert!(
-        !badges.contains(&"metric_registered".to_string()),
-        "the registry is empty until M3: {badges:?}"
+        badges.contains(&"metric_registered".to_string()),
+        "`core/pass_rate` is seeded by migration 0002, so the fixture's \
+         metric is known: {badges:?}"
+    );
+    assert!(
+        !badges.contains(&"harness_registered".to_string()),
+        "the fixture's harness is nobody's registry entry: {badges:?}"
     );
 
     // Publish the Eval the Card points at, up to seq 3, then post again.

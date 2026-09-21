@@ -8,14 +8,16 @@
 //! | [`attachments`]          | `POST /attachments`, `POST /attachments/{sha256}/complete`, `HEAD,GET /attachments/{sha256}` (GET → 302)    |
 //! | [`query`]                | `POST /{cards\|evals}/query`                                                                                |
 //! | [`relations`]            | `GET …/{name}/relations?direction&types&depth&follow_latest&version`, `POST …@{…}/relations`, `GET /evals/{ns}/{name}/cards?version&group_by` |
-//! | [`registry`]             | `GET,PUT /registry/{harnesses\|metrics\|relation_types\|ext_schemas}/{ns}/{id}@{version}` (`core/` read-only) |
-//! | [`export`]               | `GET …/{name}/export?format=hf-model-index\|bundle&version=`                                                |
+//! | [`registry`]             | `GET /registry/{kind}?ns`, `GET,PUT /registry/{harnesses\|metrics\|relation_types\|ext_schemas}/{ns}/{id}@{version}` (`core/` read-only) |
+//! | [`export`]               | `GET …/{name}[@…]/export?format=hf-model-index` (`bundle` is `501`, see [`export`]) |
 //! | [`audit`]                | `GET /audit?ns&cursor`                                                                                      |
 //!
-//! Statuses: `201` created, `200` idempotent hit or read, `409`
-//! (`attachment_missing`, `label_in_use`), `422` (`errors[]`), `404`
-//! (including private), `403` (scope), `401` (token), `400` (not JSON, bad
-//! cursor). See [`crate::error`].
+//! Statuses: `201` created, `202` accepted (an `ext_schema` whose indexes
+//! are building), `200` idempotent hit or read, `409`
+//! (`attachment_missing`, `label_in_use`, `registry_entry_exists`), `422`
+//! (`errors[]`), `404` (including private), `403` (scope), `401` (token),
+//! `400` (not JSON, bad cursor), `501` (a format the hub has not decided
+//! on), `503` (a capability this deployment lacks). See [`crate::error`].
 //!
 //! Handlers are thin: extract, authorise, call the store or core, map the
 //! result. Rules live in the library crates so that they are the same for
@@ -39,7 +41,7 @@ use evalhub_schema::openapi::API_PREFIX;
 use evalhub_store::PgPool;
 
 use crate::config::Config;
-use crate::state::AppState;
+use crate::state::{AppState, PathTableHandle};
 
 pub mod attachments;
 pub mod audit;
@@ -62,6 +64,7 @@ pub fn router(
     config: Arc<Config>,
     db: Option<PgPool>,
     objects: Option<Arc<evalhub_store::objects::Objects>>,
+    path_tables: PathTableHandle,
 ) -> Router {
     let mut openapi = crate::openapi::skeleton();
 
@@ -199,6 +202,48 @@ pub fn router(
             }),
         )
         .api_route(
+            "/cards/{ns}/{name}/export",
+            get_with(export::export_card, |op| {
+                export_docs(op.id("export_card").summary("Export a Card"))
+            }),
+        )
+        .api_route(
+            "/evals/{ns}/{name}/export",
+            get_with(export::export_eval, |op| {
+                export_docs(op.id("export_eval").summary("Export an Eval"))
+            }),
+        )
+        .api_route(
+            "/registry/{kind}",
+            get_with(registry::list, |op| {
+                op.id("list_registry")
+                    .summary("The vocabulary of one kind")
+                    .description(
+                        "Metrics, harnesses, relation types or extension schemas. Public: \
+                         the vocabulary is what a client needs to read a record.",
+                    )
+            }),
+        )
+        .api_route(
+            "/registry/{kind}/{ns}/{id}",
+            get_with(registry::get, |op| {
+                op.id("get_registry_entry")
+                    .summary("One registry entry")
+                    .description("`{id}` carries the version: `pass_rate@1`.")
+            })
+            .put_with(registry::put, |op| {
+                op.id("put_registry_entry")
+                    .summary("Register a definition")
+                    .description(
+                        "Needs `write` on `ns`; `core/` is read-only. Entries are \
+                         immutable, so a second write of the same address is `409` and a \
+                         correction is a new version. An `ext_schemas` entry answers \
+                         `202`: its expression indexes are built in the background, and \
+                         until they are valid its paths accept `eq` and `exists` only.",
+                    )
+            }),
+        )
+        .api_route(
             "/evals/{ns}/{name}/cards",
             get_with(relations::eval_cards, |op| {
                 op.id("eval_cards")
@@ -210,6 +255,18 @@ pub fn router(
                          `group_by=fingerprint.{facet}` groups them by that fingerprint. \
                          The hub lines the Cards up; it does not rank them.",
                     )
+            }),
+        )
+        .api_route(
+            "/cards/query",
+            post_with(query::query_cards, |op| {
+                query_docs(op.id("query_cards").summary("Search Cards"))
+            }),
+        )
+        .api_route(
+            "/evals/query",
+            post_with(query::query_evals, |op| {
+                query_docs(op.id("query_evals").summary("Search Evals"))
             }),
         )
         .merge(relation_routes!(
@@ -252,6 +309,7 @@ pub fn router(
     let app = ApiRouter::new()
         .nest(API_PREFIX, api)
         .finish_api(&mut openapi);
+    tighten_query_schema(&mut openapi);
 
     let cursors = crate::auth::CursorSigner::new(
         config
@@ -266,6 +324,7 @@ pub fn router(
         objects,
         openapi: Arc::new(openapi),
         cursors,
+        path_tables,
     };
 
     app.route("/openapi.json", get(meta::openapi))
@@ -383,6 +442,53 @@ macro_rules! record_routes {
     };
 }
 use record_routes;
+
+/// Replace the open `where` of the published `QueryRequest` with the
+/// filter grammar's own schema.
+///
+/// The envelope carries `where` as an arbitrary value, because the record
+/// crate must not depend on the query language. The document a client
+/// generates from should still describe the filter, and the grammar can
+/// describe itself, so the two are joined here — the one place that knows
+/// both.
+fn tighten_query_schema(openapi: &mut aide::openapi::OpenApi) {
+    let Some(components) = openapi.components.as_mut() else {
+        return;
+    };
+    let Some(request) = components.schemas.get_mut("QueryRequest") else {
+        return;
+    };
+    let filter = evalhub_query::request_schema().to_value();
+    if let Some(object) = request.json_schema.as_object_mut()
+        && let Some(properties) = object.get_mut("properties").and_then(|p| p.as_object_mut())
+    {
+        properties.insert("where".to_string(), filter);
+    }
+}
+
+fn export_docs(op: TransformOperation<'_>) -> TransformOperation<'_> {
+    op.description(
+        "`format=hf-model-index` projects a Card's model, task and results onto the \
+         YAML a Hugging Face model card embeds, with a `source` link back to the \
+         version. The projection is lossy and one-way: the hub reads and writes \
+         converters rather than asking anyone to adopt its record format. An Eval has \
+         no results, so that format is `400` on one. `format=bundle` is `501` while \
+         its design is open.",
+    )
+}
+
+fn query_docs(op: TransformOperation<'_>) -> TransformOperation<'_> {
+    op.description(
+        "A typed filter over the record schema. Every path is checked against the \
+         schema and against what the indexes can serve, so a typo is `422 unknown_path` \
+         rather than an empty page, and an operator no index answers is \
+         `422 not_indexed` rather than a sequential scan. Paging is by opaque cursor; \
+         `expand` adds fingerprints or relations to each hit.",
+    )
+    .response_with::<200, Json<evalhub_schema::query::Page<query::QueryHitDto>>, _>(|r| {
+        r.description("One page of matching versions.")
+    })
+}
 
 fn post_record_docs(op: TransformOperation<'_>) -> TransformOperation<'_> {
     op.description(
