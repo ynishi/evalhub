@@ -2,6 +2,7 @@
 	"name": "evalhub-web",
 	"version": "0.1.0",
 	"private": true,
+	"packageManager": "pnpm@12.5.1",
 	"license": "AGPL-3.0-only",
 	"type": "module",
 	"scripts": {
@@ -11,9 +12,11 @@
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"lint": "prettier --check .",
 		"format": "prettier --write .",
-		"generate-client": "node scripts/generate-client.mjs"
+		"generate-client": "node scripts/generate-client.mjs",
+		"test:e2e": "playwright test"
 	},
 	"devDependencies": {
+		"@playwright/test": "1.63.0",
 		"@sveltejs/adapter-static": "^3.0.10",
 		"@sveltejs/kit": "^2.70.3",
 		"@sveltejs/vite-plugin-svelte": "^7.3.0",

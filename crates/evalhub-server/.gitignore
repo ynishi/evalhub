@@ -1,0 +1,4 @@
+# The SvelteKit build output. Not committed; `cargo package` ships it through
+# `[package] include` (which switches gitignore filtering off), so the
+# published crate carries the UI while the tree does not.
+/web-dist

@@ -61,13 +61,35 @@ cargo test -p evalhub-core
 cargo test -p evalhub-query
 cargo test -p evalhub-store      # needs Docker
 cargo test -p evalhub-server     # needs Docker
-cargo sqlx prepare --check --workspace
+(cd crates/evalhub-store && cargo sqlx prepare --check)
 cargo deny check
 ```
 
-Do not run `cargo test --workspace` as the routine check: linking every test
-binary in parallel is what exhausts memory on a shared machine. Run the crates
-you touched, then the ones that depend on them.
+`just check` runs that list, and CI (`.github/workflows/ci.yml`) runs it,
+`just e2e` and `just package` on every push and pull request. Do not run `cargo test --workspace` as the
+routine check: linking every test binary in parallel is what exhausts memory
+on a shared machine. Run the crates you touched, then the ones that depend on
+them.
+
+`just e2e` is the one check that runs the binary a user would: it builds the
+UI and a release `evalhub`, starts a throwaway Postgres, migrates, serves
+from outside the source tree, and fetches the embedded UI, an immutable
+asset, a deep link and the API (`e2e/smoke.sh`), then drives the same server
+with Playwright (`web/tests/browser`): the bundle boots, routes on the
+client, and paints a list the API filled. Run it after a change to
+`embed.rs`, `build.rs`, `main.rs` or the web build; it needs Docker. The
+browser is fetched by `just e2e-install` into `~/.cache/ms-playwright`
+without root; the recipe checks the host has the shared libraries the
+headless shell links against and says what to do if not.
+
+Packaging has its own gate. `just package` builds the web UI into
+`crates/evalhub-server/web-dist`, runs `cargo package --workspace`, and then
+inspects every `.crate`: LICENSE and README present, the server carrying
+`web-dist/index.html`, the store carrying `.sqlx/`, none over the crates.io
+size limit. The UI is gitignored and reaches the `.crate` only through the
+server crate's `include` list, so that inspection is the one thing standing
+between a forgotten `just web-build` and a published server with no UI.
+`cargo publish` is not a recipe; it is typed by hand after `just package`.
 
 Three things are contracts and have a dedicated check:
 
@@ -75,9 +97,11 @@ Three things are contracts and have a dedicated check:
   Rust types and committed. A change to a record type is not done until
   `cargo insta test -p evalhub-schema` is green and the updated snapshot is in
   the same commit.
-- **SQL**: `.sqlx/` holds the offline query data. A change to a query is not
-  done until `cargo sqlx prepare --workspace` has been rerun and the result is
-  in the same commit.
+- **SQL**: `crates/evalhub-store/.sqlx/` holds the offline query data. It
+  lives in the crate, not at the workspace root, so that `cargo package`
+  ships it and the crate builds without a database. A change to a query is
+  not done until `cargo sqlx prepare` has been rerun from
+  `crates/evalhub-store` and the result is in the same commit.
 - **OpenAPI**: `GET /openapi.json` is what clients generate from. A change to a
   handler signature is checked by the server's OpenAPI snapshot test, and the
   `web/` client is regenerated in the same pull request.
@@ -145,7 +169,8 @@ Signed-off-by: Your Name <you@example.com>
   Origin](https://developercertificate.org/). Use your real name; a pull
   request with an unsigned commit is not merged.
 - Formatting and clippy fixes go in their own commits.
-- Generated files that are contracts (`schemas/*.json`, `.sqlx/`, the OpenAPI
+- Generated files that are contracts (`schemas/*.json`,
+  `crates/evalhub-store/.sqlx/`, the OpenAPI
   snapshot, the `web/` client) ride in the same commit as the change that
   invalidated them.
 - Never commit anything `.gitignore` excludes: local working areas, agent

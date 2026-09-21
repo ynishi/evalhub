@@ -1,0 +1,155 @@
+# The checks CONTRIBUTING.md calls green, run on every push and pull request.
+#
+# Four jobs, so a failure says which half broke and the slow halves overlap:
+#   rust     fmt, clippy, cargo-deny, the per-crate tests, the sqlx offline check
+#   web      svelte-check and prettier on the SPA
+#   e2e      `just e2e`: the release binary against Postgres, curl and Playwright
+#   package  `just package`: every crate packaged, verified and gated
+#
+# `cargo test --workspace` is not used, here or anywhere; see CONTRIBUTING.md.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # corepack would otherwise stop to ask before downloading pnpm.
+  COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+
+jobs:
+  rust:
+    name: rust
+    runs-on: ubuntu-latest
+    services:
+      # For `cargo sqlx prepare --check` only; the crate tests start their
+      # own containers through testcontainers.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: pw
+          POSTGRES_DB: evalhub
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny,sqlx-cli,just
+
+      - name: fmt
+        run: cargo fmt --check
+      - name: clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: cargo deny
+        run: cargo deny check
+
+      - name: test evalhub-schema
+        run: cargo test -p evalhub-schema --locked
+      - name: test evalhub-core
+        run: cargo test -p evalhub-core --locked
+      - name: test evalhub-query
+        run: cargo test -p evalhub-query --locked
+      - name: test evalhub-store
+        run: cargo test -p evalhub-store --locked
+      - name: test evalhub-server
+        run: cargo test -p evalhub-server --locked
+
+      - name: sqlx offline data is current
+        # Only this step may see DATABASE_URL. With it set, the sqlx macros
+        # go online and check every query against the database, so clippy
+        # and the tests would fail against the service before it has been
+        # migrated; without it they use the committed offline data.
+        env:
+          DATABASE_URL: postgres://postgres:pw@127.0.0.1:5432/evalhub
+        run: |
+          sqlx migrate run --source crates/evalhub-store/migrations
+          just sqlx-check
+
+  web:
+    name: web
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: corepack pnpm install --frozen-lockfile
+      - name: svelte-check
+        run: corepack pnpm check
+      - name: prettier
+        run: corepack pnpm lint
+
+  e2e:
+    name: e2e
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: corepack pnpm install --frozen-lockfile
+        working-directory: web
+      - name: browser and its system libraries
+        # The runner has root, so the libraries the headless shell links
+        # against can be installed here; `just e2e-install` then only has
+        # to confirm they are present.
+        run: corepack pnpm exec playwright install --with-deps --only-shell chromium
+        working-directory: web
+      - name: just e2e
+        run: just e2e
+      - name: playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            web/playwright-report
+            web/test-results
+          if-no-files-found: ignore
+          retention-days: 7
+
+  package:
+    name: package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - name: just package
+        run: just package

@@ -7,10 +7,25 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation = "https://docs.rs/evalhub-server"
+readme.workspace = true
 description = "evalhub HTTP API, auth, OpenAPI, embedded web UI, and the `evalhub` binary."
 keywords.workspace = true
 categories.workspace = true
 default-run = "evalhub"
+# `include` is exhaustive and switches the gitignore filter off for
+# packaging. It is here for one reason: `web-dist/` (the built UI) is
+# gitignored, and this is the only way it reaches the `.crate`. Anything
+# not listed does not ship, so a new top-level file needs a line here.
+include = [
+    "/src",
+    "/tests",
+    "/web-dist",
+    "/build.rs",
+    "/Cargo.toml",
+    "/LICENSE",
+    "/README.md",
+]
 
 [lints]
 workspace = true
