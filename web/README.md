@@ -1,8 +1,8 @@
 # web
 
 The evalhub web UI: a SvelteKit application built with `adapter-static` in SPA
-mode, compiled to `web/build/`, which `evalhub-server` embeds with `rust-embed`
-and serves under `/`.
+mode, compiled to `crates/evalhub-server/web-dist/`, which `evalhub-server`
+embeds with `rust-embed` and serves under `/`.
 
 The UI is one client of `/api/v1`. It has no route the API does not have, and
 it holds no privileged path into the hub; that it works from
@@ -19,7 +19,7 @@ to be: Node 22 ships `corepack`, which resolves pnpm into a user cache with no
 ```bash
 corepack pnpm install
 corepack pnpm dev        # http://localhost:5173, API proxied to :8080
-corepack pnpm build      # writes web/build
+corepack pnpm build      # writes ../crates/evalhub-server/web-dist
 corepack pnpm check      # svelte-check: types and Svelte diagnostics
 corepack pnpm lint       # prettier --check
 corepack pnpm format     # prettier --write
@@ -75,16 +75,25 @@ the enforcement.
 
 ## How the build is embedded
 
-`crates/evalhub-server/src/embed.rs` reads `web/build` at compile time,
-relative to that crate's `Cargo.toml`. A checkout without a built UI still
-compiles and still runs: the server serves a placeholder page naming the
-contract. So `web/build` is **not** committed — `.gitignore` excludes it, along
-with `node_modules` and `.svelte-kit`. `pnpm-lock.yaml` **is** committed.
+`crates/evalhub-server/src/embed.rs` reads `web-dist/` in that crate at
+compile time, relative to its `Cargo.toml`. The output lands inside the server
+crate rather than here because `cargo package` only ships files under a
+crate's root; that is what lets the crate on crates.io carry the UI.
+
+`web-dist/` is **not** committed — `crates/evalhub-server/.gitignore`
+excludes it, and the crate's `include` list in `Cargo.toml` is what puts it in
+the `.crate` anyway. `node_modules` and `.svelte-kit` are excluded here.
+`pnpm-lock.yaml` **is** committed.
+
+A debug build of a checkout without a built UI still compiles and runs: the
+server serves a placeholder page naming the contract. A release build refuses
+to compile without `web-dist/` (see `crates/evalhub-server/build.rs`), so a
+binary that ships always has the UI in it.
 
 To see the UI inside the binary:
 
 ```bash
-cd web && corepack pnpm build && cd ..
+just web-build
 cargo run -p evalhub-server -- serve --bind 127.0.0.1:8080
 ```
 

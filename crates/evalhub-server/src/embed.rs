@@ -1,16 +1,21 @@
 //! The embedded web UI.
 //!
-//! `web/build/` — the SvelteKit static build — is compiled into the binary
-//! with `rust-embed` and served under `/`. Any path that is not
+//! `web-dist/` in this crate — the SvelteKit static build — is compiled
+//! into the binary with `rust-embed` and served under `/`. Any path that is not
 //! `/api/v1`, `/openapi.json`, `/schemas/*` or an existing static file
 //! falls through to `index.html`, which is what a single-page application
 //! needs for client-side routing.
 //!
 //! Same origin as the API means no CORS configuration, no separate deploy,
 //! and a self-host that is still one binary. The `#[folder]` path is
-//! relative to this crate's `Cargo.toml`
-//! (`$CARGO_MANIFEST_DIR/../../web/build`), not to the working directory of
-//! the build.
+//! relative to this crate's `Cargo.toml` (`$CARGO_MANIFEST_DIR/web-dist`),
+//! not to the working directory of the build.
+//!
+//! The build output lives inside this crate rather than under `web/`
+//! because `cargo package` only ships files under the crate root, and it
+//! is gitignored, which `[package] include` in `Cargo.toml` overrides for
+//! packaging. That is the Kellnr / SQLPage shape: the tree never carries
+//! generated files, the published crate always does.
 //!
 //! # Why an embedded SPA
 //!
@@ -29,12 +34,19 @@
 //!
 //! # Building it, or not
 //!
-//! `#[allow_missing = true]` means a checkout without `web/build`
-//! compiles: `cargo build` is not held hostage to `pnpm`. The asset set
-//! is then empty and the fallback serves the placeholder page, which
-//! names the contract and says how to build the UI. `cd web && pnpm
-//! install && pnpm build` fills `web/build`, and the next `cargo build`
-//! picks it up.
+//! `#[allow_missing = true]` means a checkout without `web-dist/`
+//! compiles in debug: `cargo build` is not held hostage to `pnpm`. The
+//! asset set is then empty and the fallback serves the placeholder page,
+//! which names the contract and says how to build the UI. `just
+//! web-build` fills `web-dist/`, and the next `cargo build` picks it up.
+//!
+//! A release build is not lenient. `build.rs` fails when `web-dist/` is
+//! absent, naming the path and the command, unless `DOCS_RS` (docs.rs has
+//! no node) or `EVALHUB_ALLOW_MISSING_UI` (a release deliberately without
+//! a UI) is set. The silent-empty behaviour of `allow_missing` is what
+//! every frontend-owning framework refuses in a release, and it is what
+//! would let a UI-less crate be published; `just package` additionally
+//! checks the `.crate` itself for `web-dist/index.html`.
 //!
 //! In a debug build without the `debug-embed` feature `rust-embed` reads
 //! the files from disk at request time, so a `pnpm build` shows up
@@ -71,7 +83,7 @@ use rust_embed::Embed;
 
 use evalhub_schema::openapi::API_PREFIX;
 
-/// The built SPA, or nothing when `web/build` was absent at compile time.
+/// The built SPA, or nothing when `web-dist/` was absent at compile time.
 ///
 /// The folder is relative, which `rust-embed` resolves against this
 /// crate's `Cargo.toml`. It must stay relative: `$CARGO_MANIFEST_DIR`
@@ -81,7 +93,7 @@ use evalhub_schema::openapi::API_PREFIX;
 /// and a binary that silently serves the placeholder. The test below
 /// is the guard against that returning.
 #[derive(Embed)]
-#[folder = "../../web/build"]
+#[folder = "web-dist"]
 #[allow_missing = true]
 struct WebAssets;
 
@@ -100,7 +112,7 @@ const PLACEHOLDER: &str = r#"<!doctype html>
 <h1>evalhub</h1>
 <p>A hosting service for named, versioned LLM evaluation results and their materials.</p>
 <p>The web UI is not built into this binary. The API contract is at <a href="/openapi.json"><code>/openapi.json</code></a>; health is at <a href="/api/v1/healthz"><code>/api/v1/healthz</code></a>.</p>
-<p>To build the UI: <code>cd web &amp;&amp; pnpm install &amp;&amp; pnpm build</code>, then rebuild the server.</p>
+<p>To build the UI: <code>just web-build</code> (that is <code>cd web &amp;&amp; corepack pnpm install &amp;&amp; corepack pnpm build</code>), then rebuild the server.</p>
 </body>
 </html>
 "#;
@@ -170,7 +182,7 @@ mod tests {
 
     /// A built UI must actually reach the binary.
     ///
-    /// `allow_missing` exists so a checkout without `web/build` still
+    /// `allow_missing` exists so a checkout without `web-dist/` still
     /// compiles, and it will just as happily swallow a folder path that
     /// is wrong. So: if the directory is there on disk, the embed has to
     /// see it. In CI, where the UI is not built, this asserts nothing and
@@ -178,7 +190,7 @@ mod tests {
     #[test]
     fn a_built_ui_is_embedded() {
         let built = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../web/build")
+            .join("web-dist")
             .join(INDEX);
         if built.is_file() {
             assert!(

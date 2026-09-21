@@ -173,14 +173,17 @@ for everyone else. It is compiled into the binary, so a self-host is still
 one file and there is no second origin to configure.
 
 ```bash
-cd web && pnpm install && pnpm build   # fills web/build
+just web-build                          # pnpm, into crates/evalhub-server/web-dist
 cargo build --release -p evalhub-server
 ```
 
-A checkout without `web/build` builds and runs: the asset set is empty and
-any browser path gets a placeholder that names `/openapi.json`. A debug
-build reads the files from disk at request time, so `pnpm build` shows up on
-reload; a release build bakes them in.
+A debug build of a checkout without `web-dist/` still builds and runs: the
+asset set is empty and any browser path gets a placeholder that names
+`/openapi.json`. A debug build reads the files from disk at request time, so
+`just web-build` shows up on reload. A release build bakes them in, and
+refuses to build without them unless `EVALHUB_ALLOW_MISSING_UI=1` says the
+omission is deliberate. `just package` builds the UI, packages every crate
+and checks that the server's `.crate` carries it.
 
 The UI does not hold a token in JavaScript. `POST /api/v1/session` takes one
 and returns a cookie — private, `HttpOnly`, `SameSite=Strict`, and `Secure`

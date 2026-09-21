@@ -8,9 +8,13 @@ edition = "2024"
 # sqlx 0.9 declares rust-version 1.94.0; the workspace cannot claim less.
 rust-version = "1.94"
 license = "AGPL-3.0-only"
-authors = ["Yutaka Nishimura"]
+authors = ["Yutaka Nishimura <ytk.nishimura@gmail.com>"]
 repository = "https://github.com/ynishi/evalhub"
 homepage = "https://github.com/ynishi/evalhub"
+# Project-level pointer. Each crate overrides it with its own docs.rs page.
+documentation = "https://github.com/ynishi/evalhub#readme"
+# Relative to the workspace root; cargo copies it into each package.
+readme = "README.md"
 description = "A hosting service for named, versioned LLM evaluation results and their materials."
 keywords = ["llm", "evaluation", "benchmark", "hub"]
 categories = ["web-programming::http-server", "science"]

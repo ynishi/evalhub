@@ -64,7 +64,7 @@ async fn unknown_api_path_is_404_and_browser_path_reaches_the_spa() {
 
     let bytes = to_bytes(res.into_body(), 1 << 20).await.unwrap();
     let html = String::from_utf8_lossy(&bytes).into_owned();
-    // CI builds without `web/build`, so this is the placeholder; when a UI
+    // CI builds without `web-dist/`, so this is the placeholder; when a UI
     // is built in it is `index.html` instead, and either way the document
     // has to say where the contract is or point at a script that does.
     if html.contains("not built into this binary") {

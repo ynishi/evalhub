@@ -3,9 +3,12 @@ import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 
 /**
  * Single-page application: one `index.html` that the Rust binary embeds
- * from `web/build` and serves for every browser path, with routing done in
- * the client. `fallback` is what makes that work; `pages`/`assets` name the
- * directory `rust-embed` reads.
+ * and serves for every browser path, with routing done in the client.
+ * `fallback` is what makes that work; `pages`/`assets` name the directory
+ * `rust-embed` reads. That directory lives inside the server crate
+ * (`crates/evalhub-server/web-dist`) because `cargo package` only ships
+ * files under the crate root: an output directory here in `web/` could
+ * never reach the published crate.
  *
  * @type {import('@sveltejs/kit').Config}
  */
@@ -13,8 +16,8 @@ export default {
 	preprocess: vitePreprocess(),
 	kit: {
 		adapter: adapter({
-			pages: 'build',
-			assets: 'build',
+			pages: '../crates/evalhub-server/web-dist',
+			assets: '../crates/evalhub-server/web-dist',
 			fallback: 'index.html',
 			precompress: false,
 			strict: false
