@@ -8,11 +8,15 @@
 		getNamespace,
 		listMembers,
 		listRecords,
+		addMember,
+		removeMember,
 		type ListItem,
 		type Member,
-		type Namespace
+		type Namespace,
+		type Scope
 	} from '$lib/api/client';
 	import Errors from '$lib/components/Errors.svelte';
+	import { session } from '$lib/session.svelte';
 
 	const ns = $derived(page.params.ns ?? '');
 
@@ -21,6 +25,14 @@
 	let evals = $state<ListItem[]>([]);
 	let members = $state<Member[] | null>(null);
 	let error = $state<unknown>(null);
+
+	let newUser = $state('');
+	let newRole = $state<Scope>('read');
+	let notice = $state<string | null>(null);
+
+	async function reloadMembers() {
+		members = await listMembers(ns).catch(() => null);
+	}
 
 	$effect(() => {
 		const current = ns;
@@ -41,6 +53,33 @@
 			}
 		})();
 	});
+
+	async function add(event: SubmitEvent) {
+		event.preventDefault();
+		error = null;
+		notice = null;
+		try {
+			const user = newUser.trim();
+			const role = newRole;
+			await addMember(ns, user, role);
+			notice = `${user} is now ${role} in ${ns}.`;
+			newUser = '';
+			await reloadMembers();
+		} catch (e) {
+			error = e;
+		}
+	}
+
+	async function remove(member: Member) {
+		if (!confirm(`Remove ${member.user} from ${ns}?`)) return;
+		try {
+			await removeMember(ns, member.user);
+			notice = `${member.user} removed from ${ns}.`;
+			await reloadMembers();
+		} catch (e) {
+			error = e;
+		}
+	}
 </script>
 
 <svelte:head><title>{ns} · evalhub</title></svelte:head>
