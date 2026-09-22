@@ -63,6 +63,16 @@ cd "$work"
 
 check "evalhub migrate applies the schema" "$bin" migrate
 
+# Create alice (admin) and bob for the browser suite.  The token is captured
+# into a variable and handed to Playwright through the environment; it is never
+# printed to the terminal or a log.
+created=$("$bin" user create alice --scope admin)
+e2e_token=$(printf '%s\n' "$created" | awk '$1 == "token:" { print $2 }')
+check "evalhub user create alice (admin) prints a token" [ -n "$e2e_token" ]
+check "evalhub user create bob" bash -c '"$0" user create bob >/dev/null' "$bin"
+export EVALHUB_E2E_TOKEN="$e2e_token"
+export EVALHUB_E2E_MEMBER=bob
+
 "$bin" serve --bind "127.0.0.1:$http_port" >server.log 2>&1 &
 server_pid=$!
 base="http://127.0.0.1:$http_port"
@@ -104,7 +114,7 @@ check "server log shows it listening"        grep -q 'evalhub listening' server.
 # The browser suite (web/tests/browser) runs against the same server. It
 # needs the Chromium headless shell that `just e2e-install` fetches.
 echo "e2e: browser tests against $base"
-if (cd "$repo/web" && EVALHUB_E2E_BASE_URL="$base" corepack pnpm exec playwright test); then
+if (cd "$repo/web" && EVALHUB_E2E_BASE_URL="$base" EVALHUB_E2E_TOKEN="$e2e_token" EVALHUB_E2E_MEMBER=bob corepack pnpm exec playwright test); then
     ok "browser suite (web/tests/browser)"
 else
     bad "browser suite (web/tests/browser); if the browser is missing, run \`just e2e-install\`"
