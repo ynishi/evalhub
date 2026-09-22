@@ -116,6 +116,23 @@ cannot be created twice; a lost token means a new login, or `POST
 (organisations, more tokens, visibility) is done through the API or the
 UI.
 
+## An organisation
+
+A namespace with members; the one the operator publishes imported
+results under is one of them. It is made in the UI, in two steps,
+because a token's namespaces are fixed when it is issued:
+
+1. Settings → Organisations creates it; the caller becomes its first
+   `admin`.
+2. Settings → Issue a token naming it. The token in use was issued
+   before the organisation existed, so it does not name it, and until a
+   token does, even the roster answers `403`.
+
+A `write` token publishes into the organisation and reads its roster;
+adding and removing members needs an `admin` token naming it. The
+secret is shown once, in the browser; put the one a converter publishes
+with in a file of mode 600, as `user.sh` does for the first token.
+
 `bash deploy/fly/smoke.sh` is the acceptance test of a deployment: with
 the token in that file it uploads three attachments, publishes an Eval
 and a Card built from the schema crate's fixtures, reads them back with
