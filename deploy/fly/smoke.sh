@@ -3,15 +3,14 @@
 # and read them back through the API and the UI: the acceptance test of
 # a deployment, run from outside.
 #
-#   fly ssh console --app evalhub -C "evalhub user create alice --scope admin"
-#   bash deploy/fly/smoke.sh                   # asks for the token
+#   bash deploy/fly/user.sh alice              # once; writes the token file
+#   bash deploy/fly/smoke.sh
 #
 # The token is read from EVALHUB_TOKEN, else from ~/.config/evalhub/token
 # (or EVALHUB_TOKEN_FILE), else prompted for without echo when stdin is a
 # terminal; it reaches curl through a header file, never a command line.
-# Bodies are
-# the schema crate's fixtures with the attachment digests replaced by the
-# bytes this script uploads. Needs: curl, jq, sha256sum.
+# Bodies are the schema crate's fixtures with the attachment digests
+# replaced by the bytes this script uploads. Needs: curl, jq, sha256sum.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -44,9 +43,9 @@ printf 'Authorization: Bearer %s\n' "$EVALHUB_TOKEN" > "$work/auth.h"
 unset EVALHUB_TOKEN
 
 fails=0
-check() {  # check <label> <command...>
+check() {  # check <label> <command...>; the command's own output is dropped
     local label=$1; shift
-    if "$@"; then printf '  ok    %s\n' "$label"; else printf '  FAIL  %s\n' "$label"; fails=$((fails+1)); fi
+    if "$@" >/dev/null 2>&1; then printf '  ok    %s\n' "$label"; else printf '  FAIL  %s\n' "$label"; fails=$((fails+1)); fi
 }
 # req <method> <path> [json-body] → status on stdout, body in $work/body
 req() {
@@ -76,7 +75,7 @@ upload() {
 echo "== whoami"
 st=$(req GET /whoami); echo "  $st $(cat "$work/body")"
 check "whoami is 200" [ "$st" = 200 ]
-check "token has namespace $ns" jq -e --arg ns "$ns" '.namespaces | index($ns) != null' "$work/body" >/dev/null
+check "token has namespace $ns" jq -e --arg ns "$ns" '.namespaces | index($ns) != null' "$work/body"
 
 echo "== attachments"
 printf '{"id":"r1-1","prompt":"2+2","response":"4"}\n{"id":"r1-2","prompt":"3+3","response":"6"}\n' > "$work/calls.jsonl"
@@ -94,7 +93,7 @@ jq --arg s1 "$calls_sha" --argjson n1 "$(stat -c %s "$work/calls.jsonl")" \
      {path:"artifacts/r1/diff.patch", sha256:$s2, size:$n2, media_type:"text/x-diff"}]
    | .relations = []' crates/evalhub-schema/fixtures/eval-run-set.json > "$work/eval.json"
 st=$(req POST "/evals/$ns/$eval_name" "$(cat "$work/eval.json")"); echo "  $st $(head -c 300 "$work/body")"
-check "eval POST is 201 or 200" [ "$st" = 201 ] || [ "$st" = 200 ]
+check "eval POST is 201 or 200" bash -c "[ '$st' = 201 ] || [ '$st' = 200 ]"
 eval_seq=$(jq -r '.seq // empty' "$work/body")
 
 echo "== card $ns/$card_name"
@@ -102,12 +101,12 @@ jq --arg s "$samples_sha" --argjson n "$(stat -c %s "$work/samples.jsonl")" --ar
    .attachments = [{path:"samples.jsonl", sha256:$s, size:$n, media_type:"application/x-ndjson"}]
    | .relations[0].to = $to' crates/evalhub-schema/fixtures/card-complete.json > "$work/card.json"
 st=$(req POST "/cards/$ns/$card_name" "$(cat "$work/card.json")"); echo "  $st $(head -c 300 "$work/body")"
-check "card POST is 201 or 200" [ "$st" = 201 ] || [ "$st" = 200 ]
+check "card POST is 201 or 200" bash -c "[ '$st' = 201 ] || [ '$st' = 200 ]"
 
 echo "== read back"
 st=$(req GET "/cards/$ns/$card_name?expand=fingerprints,badges,changed"); echo "  card GET $st"
 check "card GET is 200" [ "$st" = 200 ]
-check "card has fingerprints" jq -e '.fingerprints != null' "$work/body" >/dev/null
+check "card has fingerprints" jq -e '.fingerprints != null' "$work/body"
 st=$(req GET "/evals/$ns/$eval_name/versions"); check "eval versions is 200" [ "$st" = 200 ]
 st=$(req GET "/evals/$ns/$eval_name/cards"); echo "  comparison $st $(head -c 200 "$work/body")"
 check "comparison view is 200" [ "$st" = 200 ]
