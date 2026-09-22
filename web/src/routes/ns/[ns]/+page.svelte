@@ -8,11 +8,15 @@
 		getNamespace,
 		listMembers,
 		listRecords,
+		addMember,
+		removeMember,
 		type ListItem,
 		type Member,
-		type Namespace
+		type Namespace,
+		type Scope
 	} from '$lib/api/client';
 	import Errors from '$lib/components/Errors.svelte';
+	import { session } from '$lib/session.svelte';
 
 	const ns = $derived(page.params.ns ?? '');
 
@@ -21,6 +25,15 @@
 	let evals = $state<ListItem[]>([]);
 	let members = $state<Member[] | null>(null);
 	let error = $state<unknown>(null);
+
+	let newUser = $state('');
+	let newRole = $state<Scope>('read');
+	let notice = $state<string | null>(null);
+	const canManage = $derived(info?.kind === 'org' && members !== null && session.mayWrite(ns));
+
+	async function reloadMembers() {
+		members = await listMembers(ns).catch(() => null);
+	}
 
 	$effect(() => {
 		const current = ns;
@@ -41,6 +54,33 @@
 			}
 		})();
 	});
+
+	async function add(event: SubmitEvent) {
+		event.preventDefault();
+		error = null;
+		notice = null;
+		try {
+			const user = newUser.trim();
+			const role = newRole;
+			await addMember(ns, user, role);
+			notice = `${user} is now ${role} in ${ns}.`;
+			newUser = '';
+			await reloadMembers();
+		} catch (e) {
+			error = e;
+		}
+	}
+
+	async function remove(member: Member) {
+		if (!confirm(`Remove ${member.user} from ${ns}?`)) return;
+		try {
+			await removeMember(ns, member.user);
+			notice = `${member.user} removed from ${ns}.`;
+			await reloadMembers();
+		} catch (e) {
+			error = e;
+		}
+	}
 </script>
 
 <svelte:head><title>{ns} · evalhub</title></svelte:head>
@@ -55,6 +95,8 @@
 
 <Errors {error} />
 
+{#if notice}<p class="notice">{notice}</p>{/if}
+
 {#if members}
 	<h2>Members</h2>
 	<div class="scroll-x">
@@ -63,6 +105,7 @@
 				<tr>
 					<th scope="col">User</th>
 					<th scope="col">Role</th>
+					<th scope="col"></th>
 				</tr>
 			</thead>
 			<tbody>
@@ -70,6 +113,11 @@
 					<tr>
 						<td><a href="/ns/{member.user}">{member.user}</a></td>
 						<td><span class="tag">{member.role}</span></td>
+						<td>
+							{#if canManage && member.user !== session.who.user}
+								<button class="link danger" onclick={() => remove(member)}>remove</button>
+							{/if}
+						</td>
 					</tr>
 				{/each}
 			</tbody>
@@ -78,6 +126,28 @@
 	<p class="faint small">
 		A member's token acts with the lesser of its own scope and their role here.
 	</p>
+
+	{#if canManage}
+		<form class="controls" onsubmit={add}>
+			<div>
+				<label for="member-user">User</label>
+				<input id="member-user" type="text" bind:value={newUser} placeholder="login" />
+			</div>
+			<div>
+				<label for="member-role">Role</label>
+				<select id="member-role" bind:value={newRole}>
+					<option value="read">read</option>
+					<option value="write">write</option>
+					<option value="admin">admin</option>
+				</select>
+			</div>
+			<button type="submit" disabled={!newUser.trim()}>Add or update</button>
+		</form>
+		<p class="faint small">
+			Adding a user who is already a member changes their role. Only an admin of the organisation
+			may do this; the hub refuses otherwise.
+		</p>
+	{/if}
 {/if}
 
 {#snippet recordTable(kind: 'cards' | 'evals', items: ListItem[])}

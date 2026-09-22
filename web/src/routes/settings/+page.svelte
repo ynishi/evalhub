@@ -5,6 +5,7 @@
 	// only its hash — so this screen makes that moment loud rather than
 	// letting it scroll past as one more row.
 	import {
+		createOrg,
 		createToken,
 		listTokens,
 		revokeToken,
@@ -32,6 +33,9 @@
 	let labelSeq = $state('');
 	let labelName = $state('');
 	let notice = $state<string | null>(null);
+
+	let orgNs = $state('');
+	let createdOrg = $state<string | null>(null);
 
 	async function reload() {
 		error = null;
@@ -100,6 +104,20 @@
 				labelName.trim()
 			);
 			notice = `Label “${labelName}” now points at version ${labelSeq}.`;
+		} catch (e) {
+			error = e;
+		}
+	}
+
+	async function createOrganisation(event: SubmitEvent) {
+		event.preventDefault();
+		error = null;
+		notice = null;
+		try {
+			const result = await createOrg(orgNs.trim());
+			notice = `Organisation ${result.ns} created; you are its admin. Manage members on its page.`;
+			createdOrg = result.ns;
+			orgNs = '';
 		} catch (e) {
 			error = e;
 		}
@@ -197,6 +215,22 @@
 			</table>
 		</div>
 	{/if}
+
+	<h2>Organisations</h2>
+	<form class="controls" onsubmit={createOrganisation}>
+		<div class="grow">
+			<label for="org-ns">Namespace</label>
+			<input id="org-ns" type="text" bind:value={orgNs} placeholder="acme" />
+		</div>
+		<button class="primary" type="submit" disabled={!orgNs.trim()}>Create</button>
+	</form>
+	{#if createdOrg}
+		<p class="small"><a href="/ns/{createdOrg}">Open {createdOrg}</a></p>
+	{/if}
+	<p class="faint small">
+		An organisation is a namespace with members; the creator is its first admin. A token must name
+		the organisation in its namespaces to act in it.
+	</p>
 
 	<h2>Record settings</h2>
 	<p class="muted small">

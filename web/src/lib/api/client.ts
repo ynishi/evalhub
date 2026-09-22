@@ -283,6 +283,25 @@ export async function listMembers(org: string): Promise<Member[]> {
 	).items;
 }
 
+/** Create an organisation. The caller becomes its first admin. */
+export async function createOrg(ns: string): Promise<Namespace> {
+	const params = { body: { ns } } as never;
+	return unwrap(await api.POST('/api/v1/orgs', params), 'creating the organisation');
+}
+
+/** Add a member to an organisation, or change their role. Requires admin on the org. */
+export async function addMember(org: string, user: string, role: Scope): Promise<Member> {
+	const params = { params: { path: { org } }, body: { user, role } } as never;
+	return unwrap(await api.POST('/api/v1/orgs/{org}/members', params), 'adding the member');
+}
+
+/** Remove a member from an organisation. Requires admin on the org. */
+export async function removeMember(org: string, user: string): Promise<void> {
+	const params = { params: { path: { org, user } } } as never;
+	const result = await api.DELETE('/api/v1/orgs/{org}/members/{user}', params);
+	if (result.response.status >= 400) unwrap(result, 'removing the member');
+}
+
 /** Browse one kind of registry entry. */
 export async function listRegistry(
 	kind: string,
