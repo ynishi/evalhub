@@ -228,8 +228,8 @@
 		<p class="small"><a href="/ns/{createdOrg}">Open {createdOrg}</a></p>
 	{/if}
 	<p class="faint small">
-		An organisation is a namespace with members; the creator is its first admin. A token must
-		name the organisation in its namespaces to act in it.
+		An organisation is a namespace with members; the creator is its first admin. A token must name
+		the organisation in its namespaces to act in it.
 	</p>
 
 	<h2>Record settings</h2>

@@ -29,6 +29,7 @@
 	let newUser = $state('');
 	let newRole = $state<Scope>('read');
 	let notice = $state<string | null>(null);
+	const canManage = $derived(info?.kind === 'org' && members !== null && session.mayWrite(ns));
 
 	async function reloadMembers() {
 		members = await listMembers(ns).catch(() => null);
@@ -94,6 +95,8 @@
 
 <Errors {error} />
 
+{#if notice}<p class="notice">{notice}</p>{/if}
+
 {#if members}
 	<h2>Members</h2>
 	<div class="scroll-x">
@@ -102,6 +105,7 @@
 				<tr>
 					<th scope="col">User</th>
 					<th scope="col">Role</th>
+					<th scope="col"></th>
 				</tr>
 			</thead>
 			<tbody>
@@ -109,6 +113,11 @@
 					<tr>
 						<td><a href="/ns/{member.user}">{member.user}</a></td>
 						<td><span class="tag">{member.role}</span></td>
+						<td>
+							{#if canManage && member.user !== session.who.user}
+								<button class="link danger" onclick={() => remove(member)}>remove</button>
+							{/if}
+						</td>
 					</tr>
 				{/each}
 			</tbody>
@@ -117,6 +126,28 @@
 	<p class="faint small">
 		A member's token acts with the lesser of its own scope and their role here.
 	</p>
+
+	{#if canManage}
+		<form class="controls" onsubmit={add}>
+			<div>
+				<label for="member-user">User</label>
+				<input id="member-user" type="text" bind:value={newUser} placeholder="login" />
+			</div>
+			<div>
+				<label for="member-role">Role</label>
+				<select id="member-role" bind:value={newRole}>
+					<option value="read">read</option>
+					<option value="write">write</option>
+					<option value="admin">admin</option>
+				</select>
+			</div>
+			<button type="submit" disabled={!newUser.trim()}>Add or update</button>
+		</form>
+		<p class="faint small">
+			Adding a user who is already a member changes their role. Only an admin of the organisation
+			may do this; the hub refuses otherwise.
+		</p>
+	{/if}
 {/if}
 
 {#snippet recordTable(kind: 'cards' | 'evals', items: ListItem[])}
