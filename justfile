@@ -101,9 +101,9 @@ e2e-install: web-install
 
 # ---------------------------------------------------------------- packaging
 
-# Package the crates that go to crates.io and gate the result. This is
-# the step before `cargo publish`; publishing itself is a manual command,
-# on purpose.
+# Package the crates that go to crates.io and gate the result. The
+# `release` workflow runs this before publishing; by hand it is the
+# check that the SDK crates are complete.
 #
 # Only the SDK crates are packaged: evalhub-schema, evalhub-core and
 # evalhub-query. The store and the server are `publish = false` (they ship
@@ -116,6 +116,13 @@ package:
     rm -f target/package/*.crate
     cargo package -p evalhub-schema -p evalhub-core -p evalhub-query --locked
     just package-gate
+
+# Compare the SDK crates' public API with the versions on crates.io. A
+# break under a patch bump (or a 0.x minor) fails; the answer is a higher
+# version. The `release` workflow runs the same check before publishing.
+# Needs `cargo install cargo-semver-checks`.
+semver-check:
+    cargo semver-checks check-release -p evalhub-schema -p evalhub-core -p evalhub-query
 
 # Inspect the `.crate` files in target/package: each must carry LICENSE and
 # README.md, and none may exceed the crates.io size limit. The UI-in-the-

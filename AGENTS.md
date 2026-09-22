@@ -13,6 +13,10 @@ copy of anything; follow the links.
   way when editing them. Only the three SDK crates (`evalhub-schema`,
   `-core`, `-query`) are published to crates.io; the store and the server
   are `publish = false` and ship as the image.
+- **Releases**: CONTRIBUTING §Releases. Merge commits only (never
+  squash). `deploy/release/land.sh <pr> <issue>` merges, closes, tags;
+  the `release` workflow publishes the crates, the image and the GitHub
+  Release from the tag. Nothing is `cargo publish`ed by hand.
 - **Verification**: per crate, `cargo test -p <crate>` (`just check` runs
   the full list). Never `cargo test --workspace` as the routine check.
   `evalhub-store` and `evalhub-server` tests need Docker.

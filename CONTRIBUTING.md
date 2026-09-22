@@ -89,8 +89,8 @@ published to crates.io: `evalhub-schema`, `evalhub-core` and
 `publish = false` and ship as the container image (`Dockerfile`), the way a
 web application is not uploaded to npm. `just package` packages the three,
 then inspects each `.crate`: LICENSE and README present, none over the
-crates.io size limit. `cargo publish` is not a recipe; it is typed by hand
-after `just package`, naming the three crates.
+crates.io size limit. Publishing is not typed by anyone: the `release`
+workflow does it from the tag (see Releases below).
 
 The UI reaches the binary through `build.rs`, which refuses a release build
 without `crates/evalhub-server/web-dist`; the image build and `just e2e`
@@ -208,6 +208,39 @@ The body records what changed, what was verified (the commands and their
 outcome), and what it deliberately does not cover, and ends with
 `Refs #<issue>`. Longer bodies are easier to write as a file and pass with
 `--body-file`; keep that file somewhere `.gitignore` excludes.
+
+## Releases
+
+A release is a pull request whose last commit carries the version bump
+(above), merged, then tagged. The tag push is the only release action a
+person takes; `.github/workflows/release.yml` does the rest from it:
+
+1. `check`: the tag names the version in `Cargo.toml` and the tagged
+   commit is on `main`. Otherwise nothing below runs.
+2. `crates`: `just package`, then `cargo semver-checks` against the
+   versions on crates.io, then `cargo publish` for whichever of
+   `evalhub-schema`, `evalhub-core` and `evalhub-query` is not yet on
+   crates.io at that version. Authentication is crates.io Trusted
+   Publishing (OIDC from this repository and this workflow file); no
+   token is stored. A rerun publishes nothing twice.
+3. `image`: `ghcr.io/ynishi/evalhub:<version>` and `:latest`.
+4. `release`: a GitHub Release for the tag, its notes taken from the
+   merged pull request's body, so write that body as the release notes.
+
+`deploy/release/land.sh <pr> <issue>` merges the pull request (a merge
+commit, never a squash: the commits carry the `Signed-off-by`), closes the
+issue, fast-forwards `main`, waits for its CI, tags, pushes the tag and
+follows the workflow to the end. `deploy/release/tag.sh` is the second
+half on its own. Both refuse to tag a commit whose CI is not green or
+whose version does not match.
+
+Merges are merge commits only; squash and rebase merges rewrite the
+commits and drop the sign-off. A break in an SDK crate's public API needs
+a higher version than a patch (0.1.x → 0.2.0 while on 0.x); `just
+semver-check` says so before the workflow does.
+
+The hosted service is not deployed by the workflow; that is `fly deploy`,
+by hand (`docs/hosting.md`).
 
 ## Working with coding agents
 

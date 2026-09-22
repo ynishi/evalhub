@@ -39,7 +39,8 @@ with CA certificates. It binds `0.0.0.0:8080`, runs as an unprivileged
 user, and its default command is `serve`. Fly builds it from the checkout
 on every `fly deploy`; the `release` workflow also pushes it to
 `ghcr.io/ynishi/evalhub` on every `v*` tag as `:<version>` and `:latest`,
-which is the artifact for anyone running it elsewhere.
+alongside the SDK crates and the GitHub Release (CONTRIBUTING
+§Releases), which is the artifact for anyone running it elsewhere.
 
 ```bash
 docker build -t evalhub .
