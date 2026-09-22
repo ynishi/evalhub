@@ -1,0 +1,52 @@
+# The hosted service on Fly.io. docs/hosting.md is the runbook; this file is
+# the part of it that is code.
+#
+# One app, built from the Dockerfile in this checkout, in front of a
+# Postgres attached with `fly postgres attach` (which sets
+# EVALHUB_DATABASE__URL) and a Tigris bucket whose credentials are copied
+# into EVALHUB_S3__* secrets. Everything secret is a Fly secret, never an
+# [env] entry here.
+#
+# `app` is a global Fly name; change it if it is taken, and pass the same
+# name to every `fly ... --app` in the runbook.
+
+app = "evalhub"
+primary_region = "nrt"
+
+[build]
+  dockerfile = "Dockerfile"
+
+# `evalhub migrate` runs in a throwaway Machine with the new image and the
+# app's secrets before any new `serve` starts; a failed migration stops
+# the deploy. `serve` refuses to start with pending migrations, so this
+# is the only order that works.
+[deploy]
+  release_command = "migrate"
+  strategy = "rolling"
+
+[env]
+  EVALHUB_BIND = "0.0.0.0:8080"
+  EVALHUB_LOG__FORMAT = "json"
+  EVALHUB_S3__REGION = "auto"
+
+# Fly terminates TLS and forwards plain HTTP to the Machine. The session
+# cookie is `Secure` (the hub does not bind loopback here), which is right
+# because the browser only ever sees https.
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  # Liveness only: healthz does not touch the database.
+  [[http_service.checks]]
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/api/v1/healthz"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

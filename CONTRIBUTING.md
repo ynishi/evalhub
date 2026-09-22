@@ -82,14 +82,20 @@ browser is fetched by `just e2e-install` into `~/.cache/ms-playwright`
 without root; the recipe checks the host has the shared libraries the
 headless shell links against and says what to do if not.
 
-Packaging has its own gate. `just package` builds the web UI into
-`crates/evalhub-server/web-dist`, runs `cargo package --workspace`, and then
-inspects every `.crate`: LICENSE and README present, the server carrying
-`web-dist/index.html`, the store carrying `.sqlx/`, none over the crates.io
-size limit. The UI is gitignored and reaches the `.crate` only through the
-server crate's `include` list, so that inspection is the one thing standing
-between a forgotten `just web-build` and a published server with no UI.
-`cargo publish` is not a recipe; it is typed by hand after `just package`.
+Packaging has its own gate, and it covers the SDK only. Three crates are
+published to crates.io: `evalhub-schema`, `evalhub-core` and
+`evalhub-query`, the ones a client or a converter links against.
+`evalhub-store` and `evalhub-server` are the application; they are
+`publish = false` and ship as the container image (`Dockerfile`), the way a
+web application is not uploaded to npm. `just package` packages the three,
+then inspects each `.crate`: LICENSE and README present, none over the
+crates.io size limit. `cargo publish` is not a recipe; it is typed by hand
+after `just package`, naming the three crates.
+
+The UI reaches the binary through `build.rs`, which refuses a release build
+without `crates/evalhub-server/web-dist`; the image build and `just e2e`
+are what exercise that, so a server with no UI cannot be built for
+release, let alone shipped.
 
 Three things are contracts and have a dedicated check:
 
@@ -141,11 +147,11 @@ issue or a chat disagree, the code wins, then the comment.
 Beyond doc comments there are two places, and nothing else:
 
 - README.md: the user-facing reference (running the server, configuration
-  keys, the API in one table, self-hosting). A new flag, endpoint or config key
-  is not done until it is in there.
+  keys, the API in one table, where the image and the crates come from). A
+  new flag, endpoint or config key is not done until it is in there.
 - `docs/`: guides and runbooks for things that are done by hand (releasing,
-  migrating a database, standing up MinIO for local development). Not design,
-  not architecture, not decision records.
+  migrating a database, operating the hosted service). Not design, not
+  architecture, not decision records.
 
 Write a rule once, where the thing it constrains is defined, and link to it
 from anywhere else; a second copy is the one nobody updates.

@@ -47,6 +47,13 @@ cargo run -p evalhub-server -- serve --bind 127.0.0.1:8080
 cargo run -p evalhub-server -- config show --origin
 ```
 
+`compose.yml` starts the same thing with Docker for local development
+(Postgres, MinIO and the hub, nothing tuned or secured). The hosted service
+is deployed from `Dockerfile` and `fly.toml`; `docs/hosting.md` is its
+runbook. The application is distributed as that image, not through
+crates.io: the published crates (`evalhub-schema`, `evalhub-core`,
+`evalhub-query`) are the SDK a client or a converter links against.
+
 Configuration is layered: defaults, then a TOML file (`--config` or
 `EVALHUB_CONFIG`, or `evalhub.toml` in the working directory), then
 `EVALHUB_*` environment variables (nested keys joined with `__`, e.g.

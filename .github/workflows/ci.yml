@@ -4,7 +4,7 @@
 #   rust     fmt, clippy, cargo-deny, the per-crate tests, the sqlx offline check
 #   web      svelte-check and prettier on the SPA
 #   e2e      `just e2e`: the release binary against Postgres, curl and Playwright
-#   package  `just package`: every crate packaged, verified and gated
+#   package  `just package`: the SDK crates packaged, verified and gated
 #
 # `cargo test --workspace` is not used, here or anywhere; see CONTRIBUTING.md.
 
@@ -147,9 +147,5 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: just
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - run: corepack enable
       - name: just package
         run: just package

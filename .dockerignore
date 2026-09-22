@@ -1,0 +1,13 @@
+# Only what the Dockerfile reads: the workspace manifests, the crates, and
+# the web source. Build output is produced inside the image.
+*
+!Cargo.toml
+!Cargo.lock
+!crates
+!web
+crates/evalhub-server/web-dist
+web/node_modules
+web/.svelte-kit
+web/test-results
+web/playwright-report
+**/target

@@ -101,30 +101,27 @@ e2e-install: web-install
 
 # ---------------------------------------------------------------- packaging
 
-# Build the UI, package every crate, and gate the result. This is the
-# step before `cargo publish --workspace`; publishing itself is a manual
-# command, on purpose.
+# Package the crates that go to crates.io and gate the result. This is
+# the step before `cargo publish`; publishing itself is a manual command,
+# on purpose.
 #
-# `--allow-dirty` is required: cargo's own dirty check counts the
-# gitignored `web-dist/` files it is about to package as uncommitted
-# changes. The clean-tree check is therefore done here, on tracked files
-# only, before cargo runs, so a real uncommitted edit still stops the
-# packaging.
-package: web-build
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [ -n "$(git status --porcelain --untracked-files=normal)" ]; then
-        echo "package: the working tree has uncommitted or untracked changes; commit or stash them first" >&2
-        git status --short >&2
-        exit 1
-    fi
-    cargo package --workspace --allow-dirty
+# Only the SDK crates are packaged: evalhub-schema, evalhub-core and
+# evalhub-query. The store and the server are `publish = false` (they ship
+# as the container image, see Dockerfile), and `cargo package --workspace`
+# cannot package the server anyway once the store is unpublishable: it
+# resolves the server's dependencies against crates.io. None of the three
+# carries generated files, so cargo's own dirty check runs in full and no
+# `--allow-dirty` is needed.
+package:
+    rm -f target/package/*.crate
+    cargo package -p evalhub-schema -p evalhub-core -p evalhub-query --locked
     just package-gate
 
 # Inspect the `.crate` files in target/package: each must carry LICENSE and
-# README.md, the server must carry the UI, and none may exceed the
-# crates.io size limit. Fails loudly, because `allow_missing` in embed.rs
-# would otherwise let a UI-less server ship without a word.
+# README.md, and none may exceed the crates.io size limit. The UI-in-the-
+# binary check is not here any more: the server is not published, and
+# build.rs refuses a release build without `web-dist/`, which is what the
+# image build and `just e2e` exercise.
 package-gate:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -145,20 +142,6 @@ package-gate:
                 bad=1
             fi
         done
-        case "$name" in
-            evalhub-server-*)
-                if ! grep -qx "$name/web-dist/index.html" <<<"$list"; then
-                    echo "package-gate: $name lacks web-dist/index.html (run \`just web-build\` before packaging)" >&2
-                    bad=1
-                fi
-                ;;
-            evalhub-store-*)
-                if ! grep -q "^$name/\.sqlx/query-" <<<"$list"; then
-                    echo "package-gate: $name lacks .sqlx offline data" >&2
-                    bad=1
-                fi
-                ;;
-        esac
         size=$(stat -c %s "$crate")
         if [ "$size" -gt {{ crate_size_limit }} ]; then
             echo "package-gate: $name is $size bytes, over the crates.io limit of {{ crate_size_limit }}" >&2

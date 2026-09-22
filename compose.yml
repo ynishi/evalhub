@@ -1,0 +1,90 @@
+# Local development only. The hub needs a Postgres and an S3-compatible
+# store to start, which is the one thing that makes it harder to run on a
+# laptop than a binary with an embedded database would be; this file
+# closes that gap and nothing more. It is not a deployment and is not kept
+# deployable: the hosted service is deployed from `fly.toml`
+# (docs/hosting.md), and nothing here is tuned, secured or backed up.
+#
+#   docker compose up --build
+#   docker compose run --rm evalhub user create alice     # prints alice's token
+#
+# The UI is at http://localhost:8080. Presigned attachment URLs point at
+# http://localhost:9000, so the browser must reach MinIO on that address.
+# Auth keys are left unset on purpose: every UI session ends when the
+# container restarts, which does not matter here.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: evalhub
+      POSTGRES_PASSWORD: evalhub
+      POSTGRES_DB: evalhub
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evalhub -d evalhub"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  minio:
+    image: quay.io/minio/minio
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: evalhub
+      MINIO_ROOT_PASSWORD: evalhub-minio
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - minio:/data
+
+  # The hub does not create its bucket; this does, once, then exits.
+  minio-init:
+    image: quay.io/minio/mc
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 evalhub evalhub-minio >/dev/null 2>&1; do sleep 1; done;
+      mc mb --ignore-existing local/evalhub
+      "
+
+  # Brings the schema current, then exits. `evalhub serve` refuses to start
+  # with pending migrations, so this runs first.
+  migrate:
+    build: .
+    command: migrate
+    environment:
+      EVALHUB_DATABASE__URL: postgres://evalhub:evalhub@postgres/evalhub
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  evalhub:
+    build: .
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      EVALHUB_DATABASE__URL: postgres://evalhub:evalhub@postgres/evalhub
+      EVALHUB_S3__ENDPOINT: http://minio:9000
+      EVALHUB_S3__PUBLIC_ENDPOINT: http://localhost:9000
+      EVALHUB_S3__BUCKET: evalhub
+      EVALHUB_S3__ACCESS_KEY: evalhub
+      EVALHUB_S3__SECRET_KEY: evalhub-minio
+      EVALHUB_S3__PATH_STYLE: "true"
+      EVALHUB_S3__ALLOW_HTTP: "true"
+      # Unset, so every session ends when the container restarts (see the
+      # header). Set both to keep sessions across restarts while developing.
+      # EVALHUB_AUTH__COOKIE_KEY:
+      # EVALHUB_AUTH__CURSOR_KEY:
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+
+volumes:
+  postgres:
+  minio:
