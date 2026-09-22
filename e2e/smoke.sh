@@ -64,14 +64,13 @@ cd "$work"
 check "evalhub migrate applies the schema" "$bin" migrate
 
 # Create alice (admin) and bob for the browser suite.  The token is captured
-# into a variable and handed to Playwright through the environment; it is never
+# into a variable and handed to Playwright on its command line only (an exported
+# EVALHUB_* variable would reach the server, whose config rejects unknown keys); it is never
 # printed to the terminal or a log.
 created=$("$bin" user create alice --scope admin)
 e2e_token=$(printf '%s\n' "$created" | awk '$1 == "token:" { print $2 }')
 check "evalhub user create alice (admin) prints a token" [ -n "$e2e_token" ]
 check "evalhub user create bob" bash -c '"$0" user create bob >/dev/null' "$bin"
-export EVALHUB_E2E_TOKEN="$e2e_token"
-export EVALHUB_E2E_MEMBER=bob
 
 "$bin" serve --bind "127.0.0.1:$http_port" >server.log 2>&1 &
 server_pid=$!
