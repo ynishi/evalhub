@@ -48,47 +48,54 @@ docker run --rm evalhub --version
 
 ## Standing it up
 
-Once, with `flyctl` logged in. The app name is the one in `fly.toml`; if
-`evalhub` is taken on Fly, change it there and in every `--app` below.
+Once, with `flyctl` logged in:
 
 ```bash
-# 1. The app, without deploying yet.
-fly apps create evalhub
-
-# 2. Postgres. A single unmanaged node is the cheapest way to find out
-#    whether the service is worth running (a few dollars a month); Fly
-#    does not support it, and Managed Postgres (`fly mpg create`, from
-#    $38/month) is the upgrade path when the answer is yes.
-fly postgres create --name evalhub-db --region nrt \
-    --initial-cluster-size 1 --vm-size shared-cpu-1x --volume-size 1
-# Creates a database and a user on that cluster and sets the URL as a
-# secret on the app, under the name the hub reads.
-fly postgres attach evalhub-db --app evalhub --variable-name EVALHUB_DATABASE__URL
-
-# 3. Attachments. `fly storage create` prints the bucket's credentials and
-#    sets them on the app under AWS_* names, which the hub does not read;
-#    copy the printed values into the hub's own keys.
-fly storage create --app evalhub --name evalhub-attachments
-fly secrets set --app evalhub \
-    EVALHUB_S3__ENDPOINT=https://fly.storage.tigris.dev \
-    EVALHUB_S3__BUCKET=evalhub-attachments \
-    EVALHUB_S3__ACCESS_KEY=<printed access key> \
-    EVALHUB_S3__SECRET_KEY=<printed secret key>
-
-# 4. Auth keys. Each is any string, hashed before use. Unset, each is
-#    generated per process: every session would end at a restart and two
-#    Machines would not agree with each other.
-fly secrets set --app evalhub \
-    EVALHUB_AUTH__COOKIE_KEY="$(openssl rand -base64 48)" \
-    EVALHUB_AUTH__CURSOR_KEY="$(openssl rand -base64 48)"
-
-# 5. Build, migrate (the release command), serve.
-fly deploy
+fly auth login
+bash deploy/fly/up.sh
 ```
+
+The script is the runbook; it does, in order:
+
+1. `fly apps create` for the app named in `fly.toml`. That line is the
+   one place the name is set: the scripts read it, the Postgres and the
+   bucket are named after it, and the URL is `https://<app>.fly.dev`
+   (or `EVALHUB_URL` once a custom domain is in front). `evalhub` is a
+   global Fly name; a second deployment of this repository changes it.
+2. **Postgres.** `fly postgres create`: a single unmanaged node, the
+   cheapest way to find out whether the service is worth running (a few
+   dollars a month). Fly does not support it; Managed Postgres (`fly mpg
+   create`, from $38/month) is the upgrade path when the answer is yes.
+   Then `fly postgres attach`, which creates a database and a user on
+   the cluster and sets the URL on the app as `EVALHUB_DATABASE__URL`.
+3. **Attachments.** `fly storage create` for a Tigris bucket. Fly sets
+   its keys on the app under `AWS_*` names the hub does not read; the
+   script copies them into `EVALHUB_S3__*`.
+4. **Auth keys.** `auth.cookie_key` and `auth.cursor_key`, generated
+   with `openssl rand`. Each is any string, hashed before use; unset,
+   each is generated per process, every session ends at a restart, and
+   two Machines do not agree with each other.
+5. `fly deploy --ha=false`: build, `migrate` as the release command,
+   one Machine (Fly adds a second for availability by default, which the
+   trial does not need).
+6. `GET /api/v1/healthz` must answer `200`.
+
+Three of those flyctl commands print credentials to the terminal by
+design (the Postgres superuser password, the attached connection URL,
+the bucket's keys). The script captures each, passes the values to `fly
+secrets import` on stdin, and shows only redacted lines, so nothing
+secret is on screen or in a terminal log. Run the commands by hand and
+that protection is gone; the Postgres superuser password in particular
+is shown once and never again, and the script deliberately does not keep
+it (admin access is `fly postgres connect --app evalhub-db`, which needs
+none).
 
 `s3.public_endpoint` is left unset, so presigned URLs are minted for the
 same Tigris endpoint the hub talks to; browsers can reach it. `s3.region`
 is `auto` in `fly.toml`, which is what Tigris expects.
+
+`bash deploy/fly/down.sh` destroys all three (bucket, app, Postgres) and
+every byte in them.
 
 ## First user
 
@@ -96,16 +103,29 @@ There is no signup endpoint. The operator creates users and the first
 token of each:
 
 ```bash
-fly ssh console --app evalhub -C "evalhub user create alice --scope admin"
+bash deploy/fly/user.sh alice          # scope admin; `user.sh alice write` for less
 ```
 
-The token is printed once. Everything after that (organisations, more
-tokens, visibility) is done through the API or the UI with that token.
+That runs `evalhub user create` on the Machine, which prints the token
+once and never again, and writes it to `~/.config/evalhub/token` (mode
+600) without showing it. Run the command by hand over `fly ssh console`
+and the token is on your screen and in any terminal log instead. A login
+cannot be created twice; a lost token means a new login, or `POST
+/tokens` with one that still works. Everything after the first token
+(organisations, more tokens, visibility) is done through the API or the
+UI.
+
+`bash deploy/fly/smoke.sh` is the acceptance test of a deployment: with
+the token in that file it uploads three attachments, publishes an Eval
+and a Card built from the schema crate's fixtures, reads them back with
+fingerprints, the comparison view, the relation graph and the export,
+makes them public, and fetches them and the UI deep link without a
+token.
 
 ## Every later release
 
 ```bash
-fly deploy
+fly deploy --ha=false
 ```
 
 `fly deploy` builds the image from the checkout, runs `evalhub migrate` in

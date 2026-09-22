@@ -34,7 +34,7 @@ FROM debian:bookworm-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --system --uid 10001 --home-dir /nonexistent --shell /usr/sbin/nologin evalhub
+    && useradd --uid 10001 --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin evalhub
 COPY --from=build /evalhub /usr/local/bin/evalhub
 USER evalhub
 # Inside a container the loopback default would be unreachable.
