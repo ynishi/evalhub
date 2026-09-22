@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 # sqlx 0.9 declares rust-version 1.94.0; the workspace cannot claim less.
 rust-version = "1.94"
@@ -21,10 +21,10 @@ categories = ["web-programming::http-server", "science"]
 
 [workspace.dependencies]
 # internal
-evalhub-schema = { path = "crates/evalhub-schema", version = "0.1.0" }
-evalhub-core = { path = "crates/evalhub-core", version = "0.1.0" }
-evalhub-query = { path = "crates/evalhub-query", version = "0.1.0" }
-evalhub-store = { path = "crates/evalhub-store", version = "0.1.0" }
+evalhub-schema = { path = "crates/evalhub-schema", version = "0.1.1" }
+evalhub-core = { path = "crates/evalhub-core", version = "0.1.1" }
+evalhub-query = { path = "crates/evalhub-query", version = "0.1.1" }
+evalhub-store = { path = "crates/evalhub-store", version = "0.1.1" }
 
 # serde
 serde = { version = "1", features = ["derive"] }

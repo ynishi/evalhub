@@ -6,7 +6,13 @@ copy of anything; follow the links.
 - **Conventions** (issues, branches, verification, commits, DCO): `CONTRIBUTING.md`.
 - **Design**: the crate docs. `cargo doc --no-deps --open`, start at
   `evalhub_server`. The design is not in `docs/`; `docs/` holds runbooks only.
-- **User-facing reference**: `README.md`.
+- **User-facing reference**: `README.md`. Local development with Docker:
+  `compose.yml`. The hosted service: `Dockerfile`, `fly.toml`,
+  `docs/hosting.md`, and the scripts in `deploy/fly/` (`up.sh` /
+  `down.sh` / `smoke.sh`), which never print a credential; keep it that
+  way when editing them. Only the three SDK crates (`evalhub-schema`,
+  `-core`, `-query`) are published to crates.io; the store and the server
+  are `publish = false` and ship as the image.
 - **Verification**: per crate, `cargo test -p <crate>` (`just check` runs
   the full list). Never `cargo test --workspace` as the routine check.
   `evalhub-store` and `evalhub-server` tests need Docker.

@@ -12,6 +12,10 @@ readme.workspace = true
 description = "evalhub persistence: Postgres repositories, object storage, query IR to SQL."
 keywords.workspace = true
 categories.workspace = true
+# Part of the application, not the SDK. crates.io carries evalhub-schema,
+# evalhub-core and evalhub-query, the crates a client or a converter links
+# against; the store and the server ship as the container image.
+publish = false
 
 [lints]
 workspace = true
