@@ -29,7 +29,18 @@
 	let newUser = $state('');
 	let newRole = $state<Scope>('read');
 	let notice = $state<string | null>(null);
-	const canManage = $derived(info?.kind === 'org' && members !== null && session.mayWrite(ns));
+	// The roster answers only to a token that names the organisation. A
+	// signed-in caller whose token does not is told so, whether or not they
+	// are a member: the hint says what a token needs, not who is in it.
+	const unnamed = $derived(
+		info?.kind === 'org' && session.signedIn && !session.who.namespaces.includes(ns)
+	);
+	// Adding and removing members is `admin` on the organisation, which the
+	// hub reads as the lesser of the token's scope and the caller's role.
+	const myRole = $derived(members?.find((m) => m.user === session.who.user)?.role ?? null);
+	const canManage = $derived(
+		info?.kind === 'org' && session.who.scope === 'admin' && myRole === 'admin'
+	);
 
 	async function reloadMembers() {
 		members = await listMembers(ns).catch(() => null);
@@ -46,7 +57,8 @@
 				cards = (await listRecords('cards', { ns: current, limit: 25 })).items;
 				evals = (await listRecords('evals', { ns: current, limit: 25 })).items;
 				if (info.kind === 'org') {
-					// Only a member may read the roster; a 403 here is normal.
+					// Only a token that names the organisation may read the
+					// roster; a 403 here is normal.
 					members = await listMembers(current).catch(() => null);
 				}
 			} catch (e) {
@@ -97,6 +109,13 @@
 
 {#if notice}<p class="notice">{notice}</p>{/if}
 
+{#if unnamed}
+	<p class="notice">
+		Your token does not name {ns}, so its members are not shown. A member sees them with a token
+		that names it: <a href="/settings?ns={ns}">issue one in Settings</a> and sign in with it.
+	</p>
+{/if}
+
 {#if members}
 	<h2>Members</h2>
 	<div class="scroll-x">
@@ -125,6 +144,7 @@
 	</div>
 	<p class="faint small">
 		A member's token acts with the lesser of its own scope and their role here.
+		{#if !canManage}Adding and removing members takes an admin token of an admin member.{/if}
 	</p>
 
 	{#if canManage}
@@ -143,10 +163,7 @@
 			</div>
 			<button type="submit" disabled={!newUser.trim()}>Add or update</button>
 		</form>
-		<p class="faint small">
-			Adding a user who is already a member changes their role. Only an admin of the organisation
-			may do this; the hub refuses otherwise.
-		</p>
+		<p class="faint small">Adding a user who is already a member changes their role.</p>
 	{/if}
 {/if}
 
