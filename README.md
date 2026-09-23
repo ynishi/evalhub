@@ -99,7 +99,7 @@ covers it.
 | `DELETE` | `/tokens/{token_id}`              | Revoke one of the caller's tokens, effective at once.                    |
 | `GET`    | `/namespaces/{ns}`                | Kind, creation time, and counts of what the caller may see.              |
 | `POST`   | `/orgs`                           | Create an organisation; the caller becomes its first `admin`.            |
-| `GET`    | `/orgs/{org}/members`             | The roster. Any member may read it.                                      |
+| `GET`    | `/orgs/{org}/members`             | The roster. Any role, with a token that names the organisation.          |
 | `POST`   | `/orgs/{org}/members`             | `{ user, role }`; `admin` on the organisation.                           |
 | `DELETE` | `/orgs/{org}/members/{user}`      | Remove a member; `admin` on the organisation.                            |
 | `GET`    | `/audit?ns&cursor&limit`          | The namespace's append-only log, newest first; `admin` on the namespace. |

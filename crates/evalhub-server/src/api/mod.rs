@@ -157,7 +157,9 @@ pub fn router(
             get_with(auth::list_members, |op| {
                 op.id("list_members")
                     .summary("Members of an organisation")
-                    .description("Any member may read the roster.")
+                    .description(
+                        "Any role is enough; the presented token must name the organisation.",
+                    )
             })
             .post_with(auth::add_member, |op| {
                 op.id("add_member")

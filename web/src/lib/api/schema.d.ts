@@ -518,7 +518,7 @@ export interface paths {
         };
         /**
          * Members of an organisation
-         * @description Any member may read the roster.
+         * @description Any role is enough; the presented token must name the organisation.
          */
         get: operations["list_members"];
         put?: never;

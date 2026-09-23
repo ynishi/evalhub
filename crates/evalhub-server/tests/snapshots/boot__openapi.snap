@@ -4567,7 +4567,7 @@ expression: body
     },
     "/api/v1/orgs/{org}/members": {
       "get": {
-        "description": "Any member may read the roster.",
+        "description": "Any role is enough; the presented token must name the organisation.",
         "operationId": "list_members",
         "responses": {
           "200": {

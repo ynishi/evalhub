@@ -11,7 +11,7 @@
 //! | `DELETE /tokens/{token_id}`       | the owner of that token                           |
 //! | `GET /namespaces/{ns}`            | anyone; private records are not counted for them  |
 //! | `POST /orgs`                      | any token; the caller becomes its first `admin`   |
-//! | `GET /orgs/{org}/members`         | a member of the org                               |
+//! | `GET /orgs/{org}/members`         | a token that names the org                        |
 //! | `POST,DELETE /orgs/{org}/members` | `admin` on the org                                |
 //!
 //! A new token may name the caller's own login and any organisation where
@@ -20,6 +20,12 @@
 //! the presenting token's namespace list, because the token that creates
 //! an organisation does not cover it yet — while the scope ceiling keeps a
 //! token from being a ladder: none can mint one that may do more than it.
+//!
+//! Reading a roster is a different question: like every other read, it
+//! asks what the *presented token* covers, so a member whose token does
+//! not name the organisation is answered `403`. That is why the token
+//! that creates an organisation cannot read its members until a second
+//! one names it.
 
 use aide::axum::IntoApiResponse;
 use axum::Json;
@@ -304,7 +310,8 @@ pub async fn list_members(
     Auth(caller): Auth,
     Path(org): Path<String>,
 ) -> Result<Json<Items<MemberDto>>, ApiError> {
-    // Membership of any level is enough to see the roster.
+    // Any role is enough to see the roster, but this is a read like any
+    // other: the presented token has to name the organisation.
     if !caller.allows(&org, Scope::Read) {
         return Err(ApiError::Forbidden);
     }
