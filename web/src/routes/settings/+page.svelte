@@ -16,6 +16,7 @@
 		type Token,
 		type Visibility
 	} from '$lib/api/client';
+	import { page } from '$app/state';
 	import Errors from '$lib/components/Errors.svelte';
 	import { session } from '$lib/session.svelte';
 
@@ -50,8 +51,14 @@
 		if (session.signedIn) void reload();
 	});
 
+	// The form starts with the caller's own login, plus the organisation an
+	// organisation's page sent them here for (`?ns=`), so the token that
+	// names it takes no typing.
 	$effect(() => {
-		if (namespaces === '' && session.who.user) namespaces = session.who.user;
+		if (namespaces === '' && session.who.user) {
+			const org = page.url.searchParams.get('ns');
+			namespaces = [session.who.user, org].filter(Boolean).join(', ');
+		}
 	});
 
 	async function issue(event: SubmitEvent) {
@@ -115,7 +122,13 @@
 		notice = null;
 		try {
 			const result = await createOrg(orgNs.trim());
-			notice = `Organisation ${result.ns} created; you are its admin. Manage members on its page.`;
+			// The token in use predates the organisation and cannot see it;
+			// the next step is a token that names it, so fill that form in.
+			notice =
+				`Organisation ${result.ns} created; you are its admin. Your current token does not ` +
+				`name it: issue one that does (the form above is filled in) and sign in with it ` +
+				`to see its members. Managing them takes an admin token.`;
+			namespaces = [session.who.user, result.ns].filter(Boolean).join(', ');
 			createdOrg = result.ns;
 			orgNs = '';
 		} catch (e) {
