@@ -13,8 +13,8 @@ does not rewrite what it receives, and never calls anything "verified".
 
 Pre-alpha. The API is complete: records with validation, fingerprints and
 badges, attachments, relations, the query language, the registry and the
-audit log. The web UI is being built; a binary without it serves the API and
-a placeholder page. Read the design in the crate docs:
+audit log. The web UI is compiled into the binary; a debug build without it
+serves the API and a placeholder page. Read the design in the crate docs:
 
 ```bash
 cargo doc --no-deps --open
@@ -93,7 +93,7 @@ covers it.
 | -------- | --------------------------------- | ------------------------------------------------------------------------ |
 | `POST`   | `/session`                        | Exchange a token for a session cookie: `{ token }`. The hub has no passwords, so a token is the credential. |
 | `DELETE` | `/session`                        | End the session, revoking the token its cookie carries.                  |
-| `GET`    | `/whoami`                         | The token's user, scope, namespaces and organisation roles.              |
+| `GET`    | `/whoami`                         | The token's user, scope and namespaces.                                  |
 | `GET`    | `/tokens`                         | The caller's tokens, by prefix. Secrets are shown once, at issue.        |
 | `POST`   | `/tokens`                         | Issue one: `{ scope, namespaces[] }`, capped by the presenting token's scope and by the caller's own login and admin organisations. |
 | `DELETE` | `/tokens/{token_id}`              | Revoke one of the caller's tokens, effective at once.                    |
