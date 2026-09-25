@@ -41,6 +41,7 @@ fn new_version<'a>(
         content_hash: hash,
         label: None,
         actor: Actor::default(),
+        readable_ns: &[],
         fingerprints: &[],
         results: &[],
         relations: &[],
@@ -780,6 +781,111 @@ async fn relations_resolve_to_versions_or_stay_textual() {
         panic!("created");
     };
     assert!(facts.all_refs_resolved, "the kind disambiguates");
+}
+
+#[tokio::test]
+async fn relations_resolve_only_to_versions_the_writer_may_see() {
+    let db = common::db().await;
+    alice(&db.pool).await;
+    let (_, secret) =
+        common::seed_version(&db.pool, "eval", "bob", "secret", 1, "private", "s").await;
+    let uses = |name: &'static str, record_type| {
+        [NewRelation {
+            relation_type: "core/uses_eval",
+            target: RelationTarget::Version {
+                ns: "bob",
+                name,
+                seq: 1,
+                record_type,
+            },
+            attrs: None,
+        }]
+    };
+    let target_of = |version_id: Uuid| {
+        let pool = db.pool.clone();
+        async move {
+            let row: (Option<Uuid>, Option<String>) = sqlx::query_as(
+                "SELECT to_version_id, to_external FROM relations WHERE from_version_id = $1",
+            )
+            .bind(version_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            row
+        }
+    };
+
+    // Someone else's private version: the same answer as a missing one.
+    let rels = uses("secret", Some(RecordType::Eval));
+    let body = json!({"title": "cites bob"});
+    let h = common::sha256(b"cites-bob");
+    let CreateOutcome::Created { meta, facts } = records::create_or_append(
+        &db.pool,
+        NewVersion {
+            relations: &rels,
+            ..new_version("alice", "c", &body, &h)
+        },
+        ids,
+        &no_badges,
+    )
+    .await
+    .unwrap() else {
+        panic!("created");
+    };
+    assert!(
+        !facts.all_refs_resolved,
+        "an invisible target does not resolve"
+    );
+    assert_eq!(
+        target_of(meta.version_id).await,
+        (None, Some("bob/secret@1".to_owned()))
+    );
+
+    // A writer who may read bob's namespace (an organisation member, say)
+    // resolves it.
+    let bob_ns = vec!["bob".to_owned()];
+    let body = json!({"title": "cites bob, with access"});
+    let h = common::sha256(b"cites-bob-2");
+    let CreateOutcome::Created { meta, facts } = records::create_or_append(
+        &db.pool,
+        NewVersion {
+            relations: &rels,
+            readable_ns: &bob_ns,
+            ..new_version("alice", "c", &body, &h)
+        },
+        ids,
+        &no_badges,
+    )
+    .await
+    .unwrap() else {
+        panic!("created");
+    };
+    assert!(facts.all_refs_resolved);
+    assert_eq!(target_of(meta.version_id).await, (Some(secret), None));
+
+    // A private Card and a public Eval share bob/dup: the invisible Card
+    // does not make the kind-less reference ambiguous.
+    common::seed_version(&db.pool, "card", "bob", "dup", 1, "private", "c").await;
+    let (_, public_eval) =
+        common::seed_version(&db.pool, "eval", "bob", "dup", 1, "public", "e").await;
+    let rels = uses("dup", None);
+    let body = json!({"title": "cites dup"});
+    let h = common::sha256(b"cites-dup");
+    let CreateOutcome::Created { meta, facts } = records::create_or_append(
+        &db.pool,
+        NewVersion {
+            relations: &rels,
+            ..new_version("alice", "c", &body, &h)
+        },
+        ids,
+        &no_badges,
+    )
+    .await
+    .unwrap() else {
+        panic!("created");
+    };
+    assert!(facts.all_refs_resolved);
+    assert_eq!(target_of(meta.version_id).await, (Some(public_eval), None));
 }
 
 #[tokio::test]

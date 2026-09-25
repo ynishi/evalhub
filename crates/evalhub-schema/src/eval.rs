@@ -83,6 +83,19 @@
 //! that an Eval exists, its `version_id`, and the `content_hash` commitment —
 //! enough to know the Card is anchored to something specific — and nothing
 //! else. No title, no runs, no attachment URLs.
+//!
+//! The Card's own body does not reveal more than its edges. On every read
+//! that returns a body, a `relations[]` element whose target the reader may
+//! not see is removed and listed under `withheld.relations` as the same
+//! commitment (`type`, `version_id`, `content_hash`). The body returned is
+//! then not the stored one, and its `content_hash` does not match it. A
+//! query's `relations.to` condition matches only targets the caller may
+//! see, so a search cannot confirm a private name either.
+//!
+//! A write learns no more than a read. A target the writer may not see is
+//! stored unresolved, exactly as one that does not exist: the response and
+//! the `refs_resolved` badge are the same in both cases. The edge resolves
+//! for a reader once the target becomes visible to them.
 
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;

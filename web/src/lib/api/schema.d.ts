@@ -1187,6 +1187,12 @@ export interface components {
             seq: number;
             /** @description Identifier of this version (ULID). */
             version_id: string;
+            /**
+             * @description What was removed from `record` because the caller may not see it.
+             *     When present, `record` is not the stored body and does not match
+             *     `content_hash`.
+             */
+            withheld?: components["schemas"]["Withheld"] | null;
         };
         /** @description The body of `POST /cards/query` and `POST /evals/query`. */
         QueryRequest: {
@@ -1401,6 +1407,12 @@ export interface components {
             tombstone?: components["schemas"]["TombstoneDto"] | null;
             /** @description Identifier of this version (ULID). Relations point at these. */
             version_id: string;
+            /**
+             * @description What was removed from `record` because the caller may not see it.
+             *     When present, `record` is not the stored body and does not match
+             *     `content_hash`.
+             */
+            withheld?: components["schemas"]["Withheld"] | null;
         };
         /** @description Which versions a query considers. */
         VersionSelector: "latest" | "all";
@@ -1414,6 +1426,27 @@ export interface components {
             scope?: string | null;
             /** @description Login of the authenticated user, or `null` for an anonymous caller. */
             user?: string | null;
+        };
+        /**
+         * @description What a read removed from a record body because the reader may not see
+         *     it. Present in an envelope only when something was removed.
+         */
+        Withheld: {
+            /** @description One entry per removed `relations[]` element, in body order. */
+            relations: components["schemas"]["WithheldRelation"][];
+        };
+        /**
+         * @description A removed `relations[]` element, reduced to the commitment: the same
+         *     `version_id` and `content_hash` a `private` endpoint of
+         *     `GET …/relations` shows.
+         */
+        WithheldRelation: {
+            /** @description sha256 of that version's canonical body. */
+            content_hash: string;
+            /** @description Registry id of the relation type of the element. */
+            type: string;
+            /** @description The version it points at. */
+            version_id: string;
         };
     };
     responses: never;

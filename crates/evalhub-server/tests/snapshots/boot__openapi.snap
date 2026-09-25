@@ -1328,6 +1328,17 @@ expression: body
           "version_id": {
             "description": "Identifier of this version (ULID).",
             "type": "string"
+          },
+          "withheld": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Withheld"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What was removed from `record` because the caller may not see it.\nWhen present, `record` is not the stored body and does not match\n`content_hash`."
           }
         },
         "required": [
@@ -1915,6 +1926,17 @@ expression: body
           "version_id": {
             "description": "Identifier of this version (ULID). Relations point at these.",
             "type": "string"
+          },
+          "withheld": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Withheld"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What was removed from `record` because the caller may not see it.\nWhen present, `record` is not the stored body and does not match\n`content_hash`."
           }
         },
         "required": [
@@ -1985,6 +2007,45 @@ expression: body
         },
         "required": [
           "namespaces"
+        ],
+        "type": "object"
+      },
+      "Withheld": {
+        "description": "What a read removed from a record body because the reader may not see\nit. Present in an envelope only when something was removed.",
+        "properties": {
+          "relations": {
+            "description": "One entry per removed `relations[]` element, in body order.",
+            "items": {
+              "$ref": "#/components/schemas/WithheldRelation"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "relations"
+        ],
+        "type": "object"
+      },
+      "WithheldRelation": {
+        "description": "A removed `relations[]` element, reduced to the commitment: the same\n`version_id` and `content_hash` a `private` endpoint of\n`GET …/relations` shows.",
+        "properties": {
+          "content_hash": {
+            "description": "sha256 of that version's canonical body.",
+            "type": "string"
+          },
+          "type": {
+            "description": "Registry id of the relation type of the element.",
+            "type": "string"
+          },
+          "version_id": {
+            "description": "The version it points at.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "version_id",
+          "content_hash"
         ],
         "type": "object"
       }

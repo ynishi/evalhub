@@ -131,6 +131,7 @@ async fn namespace_info_counts_what_the_caller_can_see() {
                     content_hash: &hash,
                     label: None,
                     actor: Actor::default(),
+                    readable_ns: &[],
                     fingerprints: &[],
                     results: &[],
                     relations: &[],

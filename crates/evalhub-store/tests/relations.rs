@@ -259,6 +259,7 @@ async fn add_resolves_and_audits() {
         RelationTarget::parse("alice/e@1").unwrap(),
         Some(&json!({"runs": ["r9"]})),
         actor,
+        &[],
     )
     .await
     .unwrap();
@@ -272,6 +273,7 @@ async fn add_resolves_and_audits() {
         RelationTarget::parse("alice/c@7").unwrap(),
         None,
         actor,
+        &[],
     )
     .await
     .unwrap();
@@ -284,6 +286,7 @@ async fn add_resolves_and_audits() {
         RelationTarget::External("hf:x/y"),
         None,
         actor,
+        &[],
     )
     .await
     .unwrap_err();
@@ -369,5 +372,120 @@ async fn comparison_view() {
             .await
             .unwrap()
             .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn resolution_never_reveals_a_private_version() {
+    let db = common::db().await;
+    let pool = &db.pool;
+    let (_, secret) =
+        common::seed_version(pool, "eval", "alice", "secret", 1, "private", "s").await;
+    let (_, card) =
+        common::seed_version(pool, "card", "alice", "public-card", 1, "public", "c").await;
+    let (_, probe) = common::seed_version(pool, "card", "mallory", "probe", 1, "public", "p").await;
+    let actor = (Some(Uuid::new_v4()), Some(Uuid::new_v4()));
+    let alice = vec!["alice".to_owned()];
+
+    // The owner's edge resolves: writing in alice implies reading there.
+    let rel = relations::add(
+        pool,
+        card,
+        USES_EVAL,
+        RelationTarget::parse("alice/secret@1").unwrap(),
+        None,
+        actor,
+        &[],
+    )
+    .await
+    .unwrap();
+    assert_eq!(rel.to.version_id(), Some(secret));
+
+    // A body citing it withholds the element from outsiders only.
+    let hidden = relations::hidden_targets(pool, &[card, probe], &[])
+        .await
+        .unwrap();
+    assert_eq!(hidden.len(), 1, "{hidden:?}");
+    let h = &hidden[&card][0];
+    assert_eq!(
+        (
+            h.relation_type.as_str(),
+            h.ns.as_str(),
+            h.name.as_str(),
+            h.seq
+        ),
+        (USES_EVAL, "alice", "secret", 1)
+    );
+    assert_eq!(h.version_id, secret);
+    assert_eq!(h.content_hash.len(), 32);
+    assert!(
+        relations::hidden_targets(pool, &[card], &alice)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    // Someone without access probing the name gets what a missing version
+    // gives: the text back, unresolved, now and on every later read.
+    let rel = relations::add(
+        pool,
+        probe,
+        USES_EVAL,
+        RelationTarget::parse("alice/secret@1").unwrap(),
+        None,
+        actor,
+        &[],
+    )
+    .await
+    .unwrap();
+    assert_eq!(rel.to, ResolvedTarget::Unresolved("alice/secret@1".into()));
+    let missing = relations::add(
+        pool,
+        probe,
+        USES_EVAL,
+        RelationTarget::parse("alice/nothing@1").unwrap(),
+        None,
+        actor,
+        &[],
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        missing.to,
+        ResolvedTarget::Unresolved("alice/nothing@1".into())
+    );
+    let outsider = relations::outgoing(pool, probe, None, &[]).await.unwrap();
+    assert!(
+        outsider
+            .iter()
+            .all(|r| matches!(r.to, ResolvedTarget::Unresolved(_))),
+        "{outsider:?}"
+    );
+    assert!(
+        relations::hidden_targets(pool, &[probe], &[])
+            .await
+            .unwrap()
+            .is_empty(),
+        "an unresolved edge withholds nothing: it holds only the writer's text"
+    );
+
+    // The owner reading the probe sees it link up lazily.
+    let owner = relations::outgoing(pool, probe, None, &alice)
+        .await
+        .unwrap();
+    assert!(
+        owner.iter().any(|r| r.to.version_id() == Some(secret)),
+        "{owner:?}"
+    );
+
+    // Once public, it links up for everyone.
+    sqlx::query("UPDATE records SET visibility = 'public' WHERE ns = 'alice' AND name = 'secret'")
+        .execute(pool)
+        .await
+        .unwrap();
+    let outsider = relations::outgoing(pool, probe, None, &[]).await.unwrap();
+    assert!(
+        outsider.iter().any(|r| r.to.version_id() == Some(secret)),
+        "{outsider:?}"
     );
 }

@@ -22,10 +22,22 @@
 //! published before its Eval links up once the Eval exists, while the
 //! `refs_resolved` badge stays as recorded (a fact about ingest).
 //!
-//! Resolution ignores visibility: an edge into a private record resolves,
-//! and the reader sees the endpoint reduced to a commitment
-//! (`visible == false`: the server reports `{ private: true, version_id,
-//! content_hash }`). Tombstoned targets resolve too and are flagged.
+//! Resolution only ever reaches a version the resolving party may see
+//! ([`visible_to`]): the writer at write time, the reader at read time. A
+//! version the writer may not see is stored unresolved, exactly like one
+//! that does not exist, so neither the response nor the `refs_resolved`
+//! badge tells the writer whether someone else's private version exists.
+//! The lazy re-attempt on the read side resolves a textual target only
+//! for a reader who may see it, so once the target is made public the edge
+//! links up for everyone, and until then a reader without access sees the
+//! text the writer typed and nothing more.
+//!
+//! An edge that did resolve at write time keeps its target. A reader who
+//! may not see that target gets the commitment (`visible == false`: the
+//! server reports `{ private: true, version_id, content_hash }`), and the
+//! body of the version the edge leaves has the element removed for that
+//! reader ([`hidden_targets`]). Tombstoned targets resolve too and are
+//! flagged.
 //!
 //! # Traversal
 //!
@@ -255,6 +267,36 @@ pub struct ComparisonRow {
     pub same_model: bool,
 }
 
+/// Whether a reader whose token covers `caller_ns` may see a record in
+/// namespace `ns` with the given `visibility` (`public` / `private`).
+///
+/// The one definition of visibility across a relation: the traversal, the
+/// comparison view, relation resolution and the redaction of bodies all
+/// ask this. The SQL read paths in [`crate::records`] apply the same
+/// predicate as `visibility = 'public' OR ns = ANY(caller_ns)`.
+pub fn visible_to(visibility: &str, ns: &str, caller_ns: &[String]) -> bool {
+    visibility == "public" || caller_ns.iter().any(|n| n == ns)
+}
+
+/// A relation target a reader may not see, as recorded on the edge that
+/// points at it: which `relations[]` elements of the source body to
+/// withhold, and the commitment to report instead.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HiddenTarget {
+    /// Registry id of the relation type of the edge.
+    pub relation_type: String,
+    /// Namespace of the target record.
+    pub ns: String,
+    /// Name of the target record.
+    pub name: String,
+    /// Sequence number of the target version.
+    pub seq: i32,
+    /// The target version.
+    pub version_id: Uuid,
+    /// Its content hash: the commitment.
+    pub content_hash: Vec<u8>,
+}
+
 /// What the read side needs to know about a version.
 #[derive(Debug, Clone)]
 struct VersionInfo {
@@ -275,7 +317,7 @@ impl VersionInfo {
     }
 
     fn visible(&self, caller_ns: &[String]) -> bool {
-        self.visibility == "public" || caller_ns.contains(&self.ns)
+        visible_to(&self.visibility, &self.ns, caller_ns)
     }
 
     fn target(&self, caller_ns: &[String]) -> ResolvedTarget {
@@ -328,23 +370,30 @@ async fn version_info(pool: &PgPool, version_id: Uuid) -> Result<Option<VersionI
     }))
 }
 
-/// `{ns}/{name}@{seq}` → the version id, regardless of visibility or tombstone.
+/// `{ns}/{name}@{seq}` → the version id, tombstoned or not, when a party
+/// covering `caller_ns` may see it. A version that exists but is not
+/// visible is `None`, the same answer as one that does not exist.
 async fn resolve_ref(
     pool: &PgPool,
     ns: &str,
     name: &str,
     seq: i32,
+    caller_ns: &[String],
 ) -> Result<Option<Uuid>, StoreError> {
-    let row = sqlx::query!(
-        "SELECT v.version_id FROM versions v JOIN records r ON r.id = v.record_id
-         WHERE r.ns = $1 AND r.name = $2 AND v.seq = $3",
+    let rows = sqlx::query!(
+        "SELECT v.version_id, r.visibility FROM versions v JOIN records r ON r.id = v.record_id
+         WHERE r.ns = $1 AND r.name = $2 AND v.seq = $3
+         ORDER BY r.type",
         ns,
         name,
         seq,
     )
-    .fetch_optional(pool)
+    .fetch_all(pool)
     .await?;
-    Ok(row.map(|r| r.version_id))
+    Ok(rows
+        .into_iter()
+        .find(|r| visible_to(&r.visibility, ns, caller_ns))
+        .map(|r| r.version_id))
 }
 
 /// The latest live version of the record owning `version_id`.
@@ -361,7 +410,9 @@ async fn latest_of_record(pool: &PgPool, record_id: Uuid) -> Result<Option<Uuid>
 }
 
 /// Resolve a stored `(to_version_id, to_external)` pair for a reader,
-/// re-attempting textual references.
+/// re-attempting textual references. A textual reference resolves only to
+/// a version the reader may see; otherwise it stays [`ResolvedTarget::Unresolved`],
+/// so the lazy path is never a way to learn that a private version exists.
 async fn resolve_stored(
     pool: &PgPool,
     to_version_id: Option<Uuid>,
@@ -376,7 +427,7 @@ async fn resolve_stored(
     let text = to_external.unwrap_or_default();
     match RelationTarget::parse(&text) {
         Some(RelationTarget::Version { ns, name, seq }) => {
-            if let Some(id) = resolve_ref(pool, ns, name, seq).await?
+            if let Some(id) = resolve_ref(pool, ns, name, seq, caller_ns).await?
                 && let Some(info) = version_info(pool, id).await?
             {
                 Ok(info.target(caller_ns))
@@ -389,9 +440,11 @@ async fn resolve_stored(
     }
 }
 
-/// Add an edge after ingest. The target is resolved like at ingest; an
-/// unresolvable hub reference is stored textually. Writes an audit row.
-/// `actor` is `(user_id, token_id)`.
+/// Add an edge after ingest. The target is resolved like at ingest: only
+/// to a version the writer may see, where the writer covers `writer_ns`
+/// plus the source's own namespace (the caller has checked `write` on
+/// it). An unresolvable or invisible hub reference is stored textually.
+/// Writes an audit row. `actor` is `(user_id, token_id)`.
 pub async fn add(
     pool: &PgPool,
     from_version_id: Uuid,
@@ -399,13 +452,18 @@ pub async fn add(
     target: RelationTarget<'_>,
     attrs: Option<&Value>,
     actor: (Option<Uuid>, Option<Uuid>),
+    writer_ns: &[String],
 ) -> Result<StoredRelation, StoreError> {
     let from = version_info(pool, from_version_id)
         .await?
         .ok_or(StoreError::SourceVersionUnknown(from_version_id))?;
+    let mut writer_ns = writer_ns.to_vec();
+    if !writer_ns.contains(&from.ns) {
+        writer_ns.push(from.ns.clone());
+    }
     let (to_version_id, to_external) = match target {
         RelationTarget::Version { ns, name, seq } => {
-            match resolve_ref(pool, ns, name, seq).await? {
+            match resolve_ref(pool, ns, name, seq, &writer_ns).await? {
                 Some(id) => (Some(id), None),
                 None => (None, Some(target.text())),
             }
@@ -442,14 +500,58 @@ pub async fn add(
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
-    let own_ns = std::slice::from_ref(&from.ns);
-    let to = resolve_stored(pool, to_version_id, to_external, own_ns).await?;
+    let to = resolve_stored(pool, to_version_id, to_external, &writer_ns).await?;
     Ok(StoredRelation {
-        from: from.target(own_ns),
+        from: from.target(&writer_ns),
         relation_type: relation_type.to_string(),
         to,
         attrs: attrs.cloned(),
     })
+}
+
+/// For each of `version_ids`, the targets of its resolved edges that a
+/// reader covering `caller_ns` may not see. Versions with none are absent
+/// from the map.
+///
+/// This is what a read path needs to withhold `relations[]` elements from
+/// a body: an element whose `(type, to)` names one of these targets is
+/// removed and the commitment reported instead. Edges stored unresolved
+/// are not here: they carry only the text the writer typed, which reveals
+/// nothing about the target (see the module doc).
+pub async fn hidden_targets(
+    pool: &PgPool,
+    version_ids: &[Uuid],
+    caller_ns: &[String],
+) -> Result<HashMap<Uuid, Vec<HiddenTarget>>, StoreError> {
+    let rows = sqlx::query!(
+        "SELECT rel.from_version_id, rel.type AS relation_type, v.version_id,
+                r.ns, r.name, v.seq, r.visibility, v.content_hash
+         FROM relations rel
+         JOIN versions v ON v.version_id = rel.to_version_id
+         JOIN records r ON r.id = v.record_id
+         WHERE rel.from_version_id = ANY($1)
+         ORDER BY rel.from_version_id, rel.type, v.version_id",
+        version_ids,
+    )
+    .fetch_all(pool)
+    .await?;
+    let mut out: HashMap<Uuid, Vec<HiddenTarget>> = HashMap::new();
+    for r in rows {
+        if visible_to(&r.visibility, &r.ns, caller_ns) {
+            continue;
+        }
+        out.entry(r.from_version_id)
+            .or_default()
+            .push(HiddenTarget {
+                relation_type: r.relation_type,
+                ns: r.ns,
+                name: r.name,
+                seq: r.seq,
+                version_id: r.version_id,
+                content_hash: r.content_hash,
+            });
+    }
+    Ok(out)
 }
 
 /// Edges leaving `version_id`, targets resolved for the caller. The
