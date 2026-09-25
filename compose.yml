@@ -29,7 +29,7 @@ services:
       retries: 12
 
   minio:
-    image: quay.io/minio/minio
+    image: cgr.dev/chainguard/minio:latest@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1
     command: server /data --console-address :9001
     environment:
       MINIO_ROOT_USER: evalhub
@@ -42,7 +42,8 @@ services:
 
   # The hub does not create its bucket; this does, once, then exits.
   minio-init:
-    image: quay.io/minio/mc
+    # The MinIO image ships `mc`; quay.io/minio/mc is no longer pullable.
+    image: cgr.dev/chainguard/minio:latest@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1
     depends_on:
       - minio
     entrypoint: >
