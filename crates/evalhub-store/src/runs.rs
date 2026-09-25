@@ -124,8 +124,49 @@
 //! `run.delete`, subject `eval/{ns}/{name}/runs/{run_id}`, one row per run
 //! that changed; an unchanged element or an archive of an archived run
 //! writes none.
+//!
+//! # The projection
+//!
+//! [`project`] reads one Eval's runs as rows (`GET /evals/{ns}/{name}/runs`),
+//! joined with the judgements of the Cards the request names, and pages
+//! them with the signed keyset cursor the server already uses
+//! (`evalhub_query::ir::RunCursor`, `(sort keys…, run_id)`). The statement
+//! is [`crate::run_sql`]'s; this module decides its scope and reads the
+//! page's side rows:
+//!
+//! ```text
+//! 1. the Eval: visible to the reader, with a live header        else None
+//! 2. member = the reader covers the Eval's namespace
+//! 3. each Card of the request: visible, latest live version,
+//!    a resolved core/uses_eval edge from it into this Eval       else RunCardsUnknown
+//! 4. per Card: its used set (card_eval_runs ⋈ runs) → runs_used, used_set_hash,
+//!    posted_used_set_hash, changed_since_card
+//! 5. the page (run_sql): runs ⋈ run_metrics / run_fingerprints / run_results
+//! 6. side rows of the page: metrics and fingerprints of the rows shown,
+//!    the Cards' run_results for every row
+//! ```
+//!
+//! Rows are the live runs; archived and deleted ones only when asked
+//! ([`RunInclude`]) and only for a member; and every run in a named Card's
+//! used set whatever its state, marked with its [`RunState`], because a
+//! Card's judgement outlives the run it judged. A reader who is not a
+//! member sees an archived run exactly as a deleted one: its `run_id`, its
+//! content hash and the Cards' judgements, nothing of the run itself, and
+//! the run's columns are masked before the filter and the sort see them.
+//!
+//! Per Card, `used_set_hash` is `evalhub_core::run::runs_hash` over the
+//! used runs' *current* content hashes, and `posted_used_set_hash` the same
+//! over the hashes `card_eval_runs` recorded when the Card was posted;
+//! they differ exactly when a used run was overwritten since, and
+//! `changed_since_card` lists which. Both are computed here, in Rust, with
+//! the core function a client verifies with; SQL only joins the rows.
+//!
+//! A Card named in the request that the reader may not see, that does not
+//! exist, or that does not use this Eval is one answer,
+//! [`StoreError::RunCardsUnknown`], so a request cannot tell the three
+//! apart.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -134,6 +175,7 @@ use uuid::Uuid;
 
 use evalhub_core::canonical::canonicalize;
 use evalhub_core::run::{materialise, run_content_hash, runs_hash};
+use evalhub_query::ir::{CardRef, RunCursor, RunQuery};
 use evalhub_schema::error::{ErrorCode, ErrorEntry};
 
 use crate::audit::{NewAudit, append};
@@ -141,6 +183,7 @@ use crate::error::{RunRejection, StoreError};
 use crate::records::{
     Actor, RecordType, Tombstone, TombstoneReason, TombstoneRequest, Visibility, lock_record,
 };
+pub use crate::run_sql::RunInclude;
 
 /// What a write did to one run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -945,6 +988,344 @@ async fn current_runs_hash(
 /// `runs_hash` of a record with no runs: the formula over `[]`.
 pub(crate) fn empty_runs_hash() -> Result<Vec<u8>, StoreError> {
     Ok(runs_hash::<&str>(&[])?.as_bytes().to_vec())
+}
+
+/// How a row of the run projection may be seen. See [`project`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunState {
+    /// Neither archived nor deleted.
+    Live,
+    /// Archived; only a member of the namespace sees this state.
+    Archived,
+    /// Deleted, or (for a reader who is not a member) archived. Only the
+    /// `run_id`, the content hash and the Cards' judgements are shown.
+    Deleted,
+}
+
+/// The columns of a run the reader may see.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RunDetail {
+    /// `ok` / `error` / `skipped`.
+    pub status: String,
+    /// `error.kind` when `status` is `error`.
+    pub error_kind: Option<String>,
+    /// `started_at`, when the body carried a parseable one.
+    pub started_at: Option<DateTime<Utc>>,
+    /// `ended_at`, when the body carried a parseable one.
+    pub ended_at: Option<DateTime<Utc>>,
+    /// The run's `metrics`.
+    pub metrics: BTreeMap<String, f64>,
+    /// The run's facet fingerprints, keyed by facet.
+    pub fingerprints: BTreeMap<String, Vec<u8>>,
+}
+
+/// One `run_results[]` entry of a Card for a run.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RunJudgement {
+    /// `run_results[].metric`.
+    pub metric: String,
+    /// `run_results[].value`.
+    pub value: Option<f64>,
+    /// `run_results[].label`.
+    pub label: Option<String>,
+    /// `run_results[].by`.
+    pub by: Option<Value>,
+}
+
+/// What one Card of the request says about one run.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RunCardCell {
+    /// The run is in the Card's used set for this Eval.
+    pub used: bool,
+    /// The run is in the Card's `changed_since_card`.
+    pub changed: bool,
+    /// The Card version's `run_results[]` entries for the run, in
+    /// `run_results[]` order. Empty when the Card did not judge it.
+    pub results: Vec<RunJudgement>,
+}
+
+/// One row of the run projection.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProjectedRun {
+    /// The run's id.
+    pub run_id: String,
+    /// sha256 of the stored run; shown in every state, as a tombstone
+    /// keeps it.
+    pub content_hash: Vec<u8>,
+    /// How the reader may see the run.
+    pub state: RunState,
+    /// The run's columns; `None` exactly when `state` is
+    /// [`RunState::Deleted`].
+    pub detail: Option<RunDetail>,
+    /// One cell per Card of the request, in [`RunPage::cards`] order.
+    pub cards: Vec<RunCardCell>,
+}
+
+/// A Card of the request, as the projection joined it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectedCard {
+    /// The Card as named.
+    pub card: CardRef,
+    /// Its `records.id`.
+    pub record_id: Uuid,
+    /// Its latest live version: the one whose judgements are joined.
+    pub version_id: Uuid,
+    /// That version's `seq`.
+    pub seq: i32,
+    /// How many runs of this Eval the version used.
+    pub runs_used: i64,
+    /// `evalhub_core::run::runs_hash` over the used runs' current content
+    /// hashes. It changes when a used run is overwritten.
+    pub used_set_hash: Vec<u8>,
+    /// The same formula over the hashes recorded when the Card used the
+    /// runs: what the Card judged. Equal to `used_set_hash` exactly when
+    /// `changed_since_card` is empty.
+    pub posted_used_set_hash: Vec<u8>,
+    /// The used runs overwritten since the Card used them, by `run_id`.
+    pub changed_since_card: Vec<String>,
+}
+
+/// One page of the run projection. See [`project`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct RunPage {
+    /// The Cards of the request, in request order.
+    pub cards: Vec<ProjectedCard>,
+    /// The rows of the page.
+    pub runs: Vec<ProjectedRun>,
+    /// Where the next page starts; `None` on the last page.
+    pub next: Option<RunCursor>,
+}
+
+/// The run projection of the Eval record `record_id`: one page of its runs,
+/// filtered, sorted and paged by `query`, each with the judgements of the
+/// Cards `query.cards` names (at each Card's latest live version) and, per
+/// Card, the used set's summary. The SQL is [`crate::run_sql`]'s; this
+/// resolves the scope around it and reads the page's side rows.
+///
+/// - `None` when the record is not an Eval, has no live header, or is
+///   private and `caller_ns` lacks its namespace (the cases read alike, as
+///   for [`get`]).
+/// - Rows: live runs; archived / deleted runs when `include` asks and the
+///   caller is a member of the Eval's namespace; and every run in a
+///   requested Card's used set whatever its state, marked
+///   ([`RunState`]). A non-member sees an archived run as deleted.
+/// - Every Card of `query.cards` must be visible to the caller
+///   ([`crate::relations::visible_to`]), have a live version, and have a
+///   `core/uses_eval` edge from that version resolved into this Eval
+///   record. Otherwise [`StoreError::RunCardsUnknown`] lists it, whichever
+///   of those failed.
+///
+/// Errors: also [`StoreError::QueryUnsupported`] when the query holds a
+/// column the projection does not render or a literal of the wrong shape.
+///
+/// Every read runs in one `REPEATABLE READ, READ ONLY` transaction, so the
+/// Cards' summaries (`changed_since_card`, `used_set_hash`) and the page's
+/// cells (`changed`) describe the same moment even while runs are being
+/// written.
+///
+/// Cost: a read per Card to resolve it, one read of the Cards' used sets,
+/// the page statement (a scan of this Eval's runs at worst), and three
+/// reads for the page's metrics, fingerprints and judgements, in one
+/// transaction.
+pub async fn project(
+    pool: &PgPool,
+    record_id: Uuid,
+    query: &RunQuery,
+    include: RunInclude,
+    caller_ns: &[String],
+) -> Result<Option<RunPage>, StoreError> {
+    // Every read below runs in one snapshot: the used-set summaries and
+    // the page are separate statements, and a run overwrite committing
+    // between them would make a cell's `changed` disagree with its Card's
+    // `changed_since_card`. Read-only; nothing is locked.
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        .execute(&mut *tx)
+        .await?;
+    let eval = sqlx::query!(
+        "SELECT r.ns, r.visibility FROM records r
+         WHERE r.id = $1 AND r.type = 'eval'
+           AND EXISTS (SELECT 1 FROM versions v
+                       WHERE v.record_id = r.id AND v.tombstoned_at IS NULL)",
+        record_id,
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(eval) = eval.filter(|e| crate::relations::visible_to(&e.visibility, &e.ns, caller_ns))
+    else {
+        return Ok(None);
+    };
+    let member = caller_ns.contains(&eval.ns);
+
+    // The Cards: visible, live, and using this Eval.
+    let mut joined: Vec<(CardRef, Uuid, Uuid, i32)> = Vec::with_capacity(query.cards.len());
+    let mut unknown = Vec::new();
+    for card in &query.cards {
+        let row = sqlx::query!(
+            r#"SELECT r.id AS record_id, r.visibility, v.version_id, v.seq,
+                      EXISTS (SELECT 1 FROM relations rel
+                              JOIN versions tv ON tv.version_id = rel.to_version_id
+                              WHERE rel.from_version_id = v.version_id AND rel.type = $3
+                                AND tv.record_id = $4) AS "uses!"
+               FROM records r
+               JOIN LATERAL (SELECT version_id, seq FROM versions
+                             WHERE record_id = r.id AND tombstoned_at IS NULL
+                             ORDER BY seq DESC LIMIT 1) v ON true
+               WHERE r.type = 'card' AND r.ns = $1 AND r.name = $2"#,
+            card.ns(),
+            card.name(),
+            crate::relations::USES_EVAL,
+            record_id,
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+        match row {
+            Some(r)
+                if r.uses && crate::relations::visible_to(&r.visibility, card.ns(), caller_ns) =>
+            {
+                joined.push((card.clone(), r.record_id, r.version_id, r.seq));
+            }
+            _ => unknown.push(card.to_string()),
+        }
+    }
+    if !unknown.is_empty() {
+        return Err(StoreError::RunCardsUnknown(unknown));
+    }
+
+    let versions: Vec<Uuid> = joined.iter().map(|(_, _, v, _)| *v).collect();
+    let mut used = crate::used_set::read(&mut tx, &versions, record_id).await?;
+    let mut cards = Vec::with_capacity(joined.len());
+    let mut used_ids: Vec<HashSet<String>> = Vec::with_capacity(joined.len());
+    let mut changed_ids: Vec<HashSet<String>> = Vec::with_capacity(joined.len());
+    for (card, card_record_id, version_id, seq) in &joined {
+        let runs = used.remove(version_id).unwrap_or_default();
+        let summary = crate::used_set::summarise(&runs)?;
+        used_ids.push(runs.into_iter().map(|r| r.run_id).collect());
+        changed_ids.push(summary.changed_since_card.iter().cloned().collect());
+        cards.push(ProjectedCard {
+            card: card.clone(),
+            record_id: *card_record_id,
+            version_id: *version_id,
+            seq: *seq,
+            runs_used: summary.runs_used,
+            used_set_hash: summary.used_set_hash,
+            posted_used_set_hash: summary.posted_used_set_hash,
+            changed_since_card: summary.changed_since_card,
+        });
+    }
+
+    let scope_cards: Vec<(CardRef, Uuid)> = joined
+        .iter()
+        .map(|(card, _, version_id, _)| (card.clone(), *version_id))
+        .collect();
+    let scope = crate::run_sql::RunScope {
+        record_id,
+        member,
+        include,
+        cards: &scope_cards,
+    };
+    let (rows, next) = crate::run_sql::fetch(&mut tx, query, &scope).await?;
+
+    // Side rows of the page: metrics and fingerprints of the shown runs,
+    // judgements of every row.
+    let shown: Vec<String> = rows
+        .iter()
+        .filter(|r| r.shown)
+        .map(|r| r.run_id.clone())
+        .collect();
+    let all: Vec<String> = rows.iter().map(|r| r.run_id.clone()).collect();
+    let mut metrics: HashMap<String, BTreeMap<String, f64>> = HashMap::new();
+    for m in sqlx::query!(
+        "SELECT run_id, metric, value FROM run_metrics WHERE record_id = $1 AND run_id = ANY($2)",
+        record_id,
+        &shown,
+    )
+    .fetch_all(&mut *tx)
+    .await?
+    {
+        metrics
+            .entry(m.run_id)
+            .or_default()
+            .insert(m.metric, m.value);
+    }
+    let mut fingerprints: HashMap<String, BTreeMap<String, Vec<u8>>> = HashMap::new();
+    for f in sqlx::query!(
+        "SELECT run_id, facet, fingerprint FROM run_fingerprints
+         WHERE record_id = $1 AND run_id = ANY($2)",
+        record_id,
+        &shown,
+    )
+    .fetch_all(&mut *tx)
+    .await?
+    {
+        fingerprints
+            .entry(f.run_id)
+            .or_default()
+            .insert(f.facet, f.fingerprint);
+    }
+    let mut judgements: HashMap<(Uuid, String), Vec<RunJudgement>> = HashMap::new();
+    if !versions.is_empty() && !all.is_empty() {
+        for j in sqlx::query!(
+            "SELECT version_id, run_id, metric, value, label, by FROM run_results
+             WHERE version_id = ANY($1) AND eval_record_id = $2 AND run_id = ANY($3)
+             ORDER BY version_id, ordinal",
+            &versions,
+            record_id,
+            &all,
+        )
+        .fetch_all(&mut *tx)
+        .await?
+        {
+            judgements
+                .entry((j.version_id, j.run_id))
+                .or_default()
+                .push(RunJudgement {
+                    metric: j.metric,
+                    value: j.value,
+                    label: j.label,
+                    by: j.by,
+                });
+        }
+    }
+
+    let runs = rows
+        .into_iter()
+        .map(|r| {
+            let state = match (r.shown, r.state.as_str()) {
+                (true, "archived") => RunState::Archived,
+                (true, _) => RunState::Live,
+                (false, _) => RunState::Deleted,
+            };
+            let detail = r.shown.then(|| RunDetail {
+                status: r.status.clone().unwrap_or_default(),
+                error_kind: r.error_kind.clone(),
+                started_at: r.started_at,
+                ended_at: r.ended_at,
+                metrics: metrics.remove(&r.run_id).unwrap_or_default(),
+                fingerprints: fingerprints.remove(&r.run_id).unwrap_or_default(),
+            });
+            let cells = cards
+                .iter()
+                .enumerate()
+                .map(|(i, c)| RunCardCell {
+                    used: used_ids[i].contains(&r.run_id),
+                    changed: changed_ids[i].contains(&r.run_id),
+                    results: judgements
+                        .remove(&(c.version_id, r.run_id.clone()))
+                        .unwrap_or_default(),
+                })
+                .collect();
+            ProjectedRun {
+                run_id: r.run_id,
+                content_hash: r.content_hash,
+                state,
+                detail,
+                cards: cells,
+            }
+        })
+        .collect();
+    tx.commit().await?;
+    Ok(Some(RunPage { cards, runs, next }))
 }
 
 /// The row shape every run read maps from.

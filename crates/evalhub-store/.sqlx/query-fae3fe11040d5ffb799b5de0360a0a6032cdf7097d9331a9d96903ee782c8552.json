@@ -1,27 +1,27 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT v.version_id, r.type AS record_type, r.visibility\n         FROM versions v JOIN records r ON r.id = v.record_id\n         WHERE r.ns = $1 AND r.name = $2 AND v.seq = $3\n           AND ($4::text IS NULL OR r.type = $4)\n         ORDER BY r.type",
+  "query": "SELECT id, ns, visibility FROM records WHERE id = ANY($1) ORDER BY id FOR SHARE",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "version_id",
+        "name": "id",
         "type_info": "Uuid",
         "origin": {
           "Table": {
-            "table": "versions",
-            "name": "version_id"
+            "table": "records",
+            "name": "id"
           }
         }
       },
       {
         "ordinal": 1,
-        "name": "record_type",
+        "name": "ns",
         "type_info": "Text",
         "origin": {
           "Table": {
             "table": "records",
-            "name": "type"
+            "name": "ns"
           }
         }
       },
@@ -39,10 +39,7 @@
     ],
     "parameters": {
       "Left": [
-        "Text",
-        "Text",
-        "Int4",
-        "Text"
+        "UuidArray"
       ]
     },
     "nullable": [
@@ -51,5 +48,5 @@
       false
     ]
   },
-  "hash": "446ab969753d94d054faedcb3ac8cb58aa4b6b0d7f49b2ceed5f958440c4ad13"
+  "hash": "fae3fe11040d5ffb799b5de0360a0a6032cdf7097d9331a9d96903ee782c8552"
 }

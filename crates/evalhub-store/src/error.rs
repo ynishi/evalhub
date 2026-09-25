@@ -159,6 +159,32 @@ pub enum StoreError {
     #[error("{} run(s) rejected", .0.len())]
     RunsRejected(Vec<RunRejection>),
 
+    /// A Card's references to runs were refused, and nothing was written:
+    /// the Card ingest ([`crate::records::ingest`]) or a later
+    /// `core/uses_eval` edge ([`crate::relations::add`]) named a run that
+    /// has no row in an Eval the writer may see (`run_unknown`), or a
+    /// `run_results[]` element outside the Card's used set for its Eval
+    /// (`run_not_in_used_set`). Carries every offending position, sorted
+    /// by `(path, code)`: `/run_results/{i}/run_id`,
+    /// `/relations/{j}/attrs/runs/{k}` on ingest, `/attrs/runs/{k}` on
+    /// `add`. Both codes are `422`.
+    ///
+    /// An entry never says whether an Eval exists or may be seen: a run
+    /// of an Eval the writer may not see, a run of an Eval that does not
+    /// exist and a run missing from a visible Eval produce the same entry,
+    /// byte for byte (the hint names nothing but the position).
+    #[error("{} run reference(s) rejected", .0.len())]
+    CardRunsRejected(Vec<evalhub_schema::error::ErrorEntry>),
+
+    /// A run projection ([`crate::runs::project`]) named Cards that are
+    /// unknown to the caller: no such Card, a Card the caller may not see,
+    /// a Card with no live version, or one whose latest live version has
+    /// no resolved `core/uses_eval` edge into the Eval read. The cases are
+    /// deliberately one variant. Carries every such `{ns}/{name}`, in
+    /// request order; nothing was read.
+    #[error("unknown card(s): {0:?}")]
+    RunCardsUnknown(Vec<String>),
+
     /// Canonicalising a body failed. Not expected for a value parsed from
     /// JSON text; surfaced rather than unwrapped because a hash of a
     /// partially written buffer must never be stored.

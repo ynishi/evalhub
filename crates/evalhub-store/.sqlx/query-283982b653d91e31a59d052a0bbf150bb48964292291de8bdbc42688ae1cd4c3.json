@@ -1,0 +1,74 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT r.id AS record_id, r.visibility, v.version_id, v.seq,\n                      EXISTS (SELECT 1 FROM relations rel\n                              JOIN versions tv ON tv.version_id = rel.to_version_id\n                              WHERE rel.from_version_id = v.version_id AND rel.type = $3\n                                AND tv.record_id = $4) AS \"uses!\"\n               FROM records r\n               JOIN LATERAL (SELECT version_id, seq FROM versions\n                             WHERE record_id = r.id AND tombstoned_at IS NULL\n                             ORDER BY seq DESC LIMIT 1) v ON true\n               WHERE r.type = 'card' AND r.ns = $1 AND r.name = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "record_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "records",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "visibility",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "records",
+            "name": "visibility"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "version_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "versions",
+            "name": "version_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "seq",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "versions",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "uses!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "283982b653d91e31a59d052a0bbf150bb48964292291de8bdbc42688ae1cd4c3"
+}

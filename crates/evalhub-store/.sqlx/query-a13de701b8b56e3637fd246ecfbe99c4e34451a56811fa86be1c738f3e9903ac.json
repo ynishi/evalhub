@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO card_eval_runs (card_version_id, eval_record_id, run_id, content_hash)\n             SELECT $1, $2, i, h FROM UNNEST($3::text[], $4::bytea[]) AS t (i, h)\n             ON CONFLICT (card_version_id, eval_record_id, run_id) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "TextArray",
+        "ByteaArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a13de701b8b56e3637fd246ecfbe99c4e34451a56811fa86be1c738f3e9903ac"
+}

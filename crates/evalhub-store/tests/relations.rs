@@ -248,9 +248,20 @@ async fn traverse_depth_direction_and_follow_latest() {
 async fn add_resolves_and_audits() {
     let db = common::db().await;
     let pool = &db.pool;
-    let (_, eval) = common::seed_version(pool, "eval", "alice", "e", 1, "public", "e").await;
+    let (eval_record, eval) =
+        common::seed_version(pool, "eval", "alice", "e", 1, "public", "e").await;
     let (_, card) = common::seed_version(pool, "card", "alice", "c", 1, "public", "c").await;
     let actor = (Some(Uuid::new_v4()), Some(Uuid::new_v4()));
+    // The run `attrs.runs` names must have a row: a used set is fixed now.
+    sqlx::query(
+        "INSERT INTO runs (record_id, run_id, status, body, content_hash)
+         VALUES ($1, 'r9', 'ok', '{}', $2)",
+    )
+    .bind(eval_record)
+    .bind(&[9u8; 32][..])
+    .execute(pool)
+    .await
+    .unwrap();
 
     let rel = relations::add(
         pool,
@@ -265,6 +276,41 @@ async fn add_resolves_and_audits() {
     .unwrap();
     assert_eq!(rel.to.version_id(), Some(eval));
     assert_eq!(rel.from.version_id(), Some(card));
+    let used: Vec<(String, Vec<u8>)> = sqlx::query_as(
+        "SELECT run_id, content_hash FROM card_eval_runs WHERE card_version_id = $1",
+    )
+    .bind(card)
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    assert_eq!(used, vec![("r9".to_string(), vec![9u8; 32])]);
+
+    // Without a row the edge is refused, and nothing is written.
+    let (_, other) = common::seed_version(pool, "card", "alice", "c-other", 1, "public", "o").await;
+    let err = relations::add(
+        pool,
+        other,
+        USES_EVAL,
+        RelationTarget::parse("alice/e@1").unwrap(),
+        Some(&json!({"runs": ["r9", "r10"]})),
+        actor,
+        &[],
+    )
+    .await
+    .unwrap_err();
+    let evalhub_store::error::StoreError::CardRunsRejected(errors) = err else {
+        panic!("{err}");
+    };
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert_eq!(errors[0].path, "/attrs/runs/1");
+    assert_eq!(errors[0].code, evalhub_schema::error::ErrorCode::RunUnknown);
+    let edges: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM relations WHERE from_version_id = $1")
+            .bind(other)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert_eq!(edges, 0);
 
     let rel = relations::add(
         pool,

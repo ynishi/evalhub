@@ -12,9 +12,14 @@
 //! 3. equal to the new hash?  → return it, 200, done        (idempotent)
 //! 4. every attachments[].sha256 is `ready`?                 else 409 attachment_missing
 //! 5. resolve relations[].to; look the harness and metrics up in the registry
+//!    5b. a Card: FOR SHARE on each Eval its core/uses_eval edges resolved to,
+//!        fix the used set per Eval record, check run_results[] against it
+//!                                                           else 422 run_unknown /
+//!                                                                run_not_in_used_set
 //! 6. seq = max(seq) + 1; changed[] = top-level keys whose value differs
 //! 7. badges = badges_for(facts)                             the caller's rule, the store's facts
-//! 8. insert versions, fingerprints, results, relations, attachment_refs, audit
+//! 8. insert versions, fingerprints, results, relations, attachment_refs, audit;
+//!    a Card also run_results and card_eval_runs (each used run, its content_hash now)
 //! 9. commit → 201 { id, version_id, seq, label, content_hash, changed[], badges[] }
 //! ```
 //!
@@ -22,6 +27,67 @@
 //! posts to the same name. Different names do not contend. Steps 4 and 5
 //! run inside the same transaction, so the version that lands has seen
 //! the attachment states and relation targets it was checked against.
+//!
+//! # A Card's runs (step 5b)
+//!
+//! A Card judges runs, and the hub remembers which runs it used and what
+//! they were when it did. After the relations resolve, for every
+//! `core/uses_eval` edge that resolved to a version of an Eval record the
+//! writer may see (resolution only reaches such versions), the Eval
+//! record's row is locked `FOR SHARE` and the Card's *used set* for that
+//! record is fixed: the union of `attrs.runs` over the edges into the
+//! record, or, when none of them carries `attrs.runs`, every run of the
+//! record neither archived nor tombstoned now. An edge that stayed
+//! unresolved (external, not yet existing, or not visible to the writer)
+//! has no used set. The rule and the lock order are
+//! `crate::used_set`'s, shared with [`crate::relations::add`]:
+//!
+//! ```text
+//! Card record  FOR UPDATE (step 1)  →  Eval records FOR SHARE, by id  (step 5b)
+//! run write:   Eval record FOR UPDATE, no Card lock
+//! ```
+//!
+//! so a run write waits for a Card that is reading its Eval's runs and the
+//! reverse, never in a cycle, and `card_eval_runs` records the hashes the
+//! rows had when the Card committed.
+//!
+//! Step 5 resolved the edges, and read each Eval's visibility, without a
+//! lock. `set_visibility` updates the record row under `FOR UPDATE`, so
+//! the share lock of step 5b waits for one in flight and then reads the
+//! visibility that holds until this Card commits. Step 5b re-checks it
+//! there: an edge into an Eval the writer may no longer see is demoted to
+//! unresolved (stored as text, no used set, no `refs_resolved`), exactly
+//! as if step 5 had found it private, so a Card never fixes a used set in,
+//! or learns run existence from, an Eval its writer cannot see.
+//!
+//! `body.run_results[]` is read here, from the body: the server extracts
+//! `results[]` into [`NewVersion::results`], but a Card's judgements are
+//! checked against state only the store has, so [`NewVersion`] carries no
+//! field for them. Each element's `eval` (`{ns}/{name}`) is matched to the
+//! record of a resolved edge; its `run_id` must be in that record's used
+//! set. The refusals, all collected into
+//! [`StoreError::CardRunsRejected`]:
+//!
+//! | Case                                                         | Code                  | Path                              |
+//! | ------------------------------------------------------------ | --------------------- | --------------------------------- |
+//! | an `attrs.runs` element with no row in the Eval              | `run_unknown`         | `/relations/{j}/attrs/runs/{k}`   |
+//! | `run_results[].eval` resolved to nothing (external, absent, not visible) | `run_unknown` | `/run_results/{i}/run_id`   |
+//! | `run_results[].run_id` with no row                           | `run_unknown`         | `/run_results/{i}/run_id`         |
+//! | a row, outside the used set                                  | `run_not_in_used_set` | `/run_results/{i}/run_id`         |
+//!
+//! A run of an Eval the writer may not see, a run of an Eval that does not
+//! exist and a run missing from a visible Eval produce the same entry,
+//! byte for byte. Archived and tombstoned runs have rows and so may be
+//! named; a Card's judgement outlives the run it judged.
+//! `run_results_eval_unknown` (an `eval` that is no `core/uses_eval`
+//! target of the Card at all) and the count limit are checked before the
+//! store, by `evalhub_core` and the server.
+//!
+//! At step 8 the elements become `run_results` rows (position, Eval record,
+//! run, metric, value, label, `by`) and the used sets `card_eval_runs`
+//! rows. The idempotent hit (step 3) returns before step 5, so re-posting
+//! a Card body fixes nothing again: the version, and its used set, are the
+//! ones already stored.
 //!
 //! # Relation resolution
 //!
@@ -344,7 +410,9 @@ pub struct NewVersion<'a> {
     pub fingerprints: &'a [(&'a str, [u8; 32])],
     /// `results[]` as rows.
     pub results: &'a [NewResult<'a>],
-    /// `relations[]`, targets parsed.
+    /// `relations[]`, targets parsed, in body order: an edge's position
+    /// here is the `j` of `/relations/{j}/attrs/runs/{k}` when a Card's
+    /// used set is refused (see "A Card's runs").
     pub relations: &'a [NewRelation<'a>],
     /// `attachments[]`; every digest must already be `ready`.
     pub attachments: &'a [NewAttachmentRef<'a>],
@@ -488,7 +556,9 @@ pub async fn create_or_append(
 /// [`StoreError::AttachmentMissing`] when a referenced object is not
 /// `ready`, [`StoreError::LabelInUse`] when `label` already names a
 /// version of this record, [`StoreError::RunsRejected`] when a run of a
-/// 1.0 body is refused, [`StoreError::Query`] otherwise. Nothing is
+/// 1.0 body is refused, [`StoreError::CardRunsRejected`] when a Card's
+/// used set or `run_results[]` names a run it may not (see "A Card's
+/// runs" in the module doc), [`StoreError::Query`] otherwise. Nothing is
 /// written on any error.
 pub async fn ingest(
     pool: &PgPool,
@@ -615,7 +685,7 @@ pub async fn ingest(
     if !readable_ns.iter().any(|n| n == new.ns) {
         readable_ns.push(new.ns.to_owned());
     }
-    let mut resolved: Vec<Option<Uuid>> = Vec::with_capacity(new.relations.len());
+    let mut resolved: Vec<Option<ResolvedVersion>> = Vec::with_capacity(new.relations.len());
     let mut all_refs_resolved = true;
     for rel in new.relations {
         let target = match rel.target {
@@ -636,6 +706,21 @@ pub async fn ingest(
         };
         resolved.push(target);
     }
+    // Step 5b: a Card's used sets and its `run_results[]`, against the
+    // Evals its `core/uses_eval` edges resolved to.
+    // It may demote an edge to unresolved (an Eval made private since it
+    // resolved), so `all_refs_resolved` is recomputed after it.
+    let card_runs = if new.record_type == RecordType::Card {
+        let card_runs = fix_card_runs(&mut tx, &new, &mut resolved, &readable_ns).await?;
+        all_refs_resolved = new
+            .relations
+            .iter()
+            .zip(&resolved)
+            .all(|(rel, r)| r.is_some() || matches!(rel.target, RelationTarget::External(_)));
+        Some(card_runs)
+    } else {
+        None
+    };
     let harness_registered = harness_registered(&mut tx, new.body).await?;
     let all_metrics_registered = all_metrics_registered(&mut tx, new.results).await?;
     let facts = IngestFacts {
@@ -714,7 +799,12 @@ pub async fn ingest(
         .execute(&mut *tx)
         .await?;
     }
-    for (rel, to_version_id) in new.relations.iter().zip(&resolved) {
+    if let Some(card_runs) = &card_runs {
+        insert_run_results(&mut tx, version_id, &card_runs.run_results).await?;
+        crate::used_set::insert(&mut tx, version_id, &card_runs.used).await?;
+    }
+    for (rel, resolved) in new.relations.iter().zip(&resolved) {
+        let to_version_id = resolved.as_ref().map(|r| r.version_id);
         let to_external = match (rel.target, to_version_id) {
             (_, Some(_)) => None,
             (RelationTarget::External(s), None) => Some(s.to_owned()),
@@ -727,7 +817,7 @@ pub async fn ingest(
              VALUES ($1, $2, $3, $4, $5)",
             version_id,
             rel.relation_type,
-            *to_version_id,
+            to_version_id,
             to_external,
             rel.attrs,
         )
@@ -846,6 +936,182 @@ async fn write_converted_runs(
     })
 }
 
+/// One `run_results[]` element as a row of `run_results`.
+struct RunResultRow {
+    ordinal: i32,
+    eval_record_id: Uuid,
+    run_id: String,
+    metric: String,
+    value: Option<f64>,
+    label: Option<String>,
+    by: Option<Value>,
+}
+
+/// What step 5b fixed for a Card version, for step 8 to write.
+struct CardRuns {
+    /// The used set per Eval record.
+    used: BTreeMap<Uuid, crate::used_set::UsedSet>,
+    /// `run_results[]`, every element inside its used set.
+    run_results: Vec<RunResultRow>,
+}
+
+/// Step 5b for a Card: lock the Evals its `core/uses_eval` edges resolved
+/// to (`FOR SHARE`, see [`crate::used_set`]), fix a used set per Eval
+/// record, and check `body.run_results[]` against them. Every refusal is
+/// collected; any refusal is [`StoreError::CardRunsRejected`].
+///
+/// `resolved` is aligned with `new.relations`; an edge's position there is
+/// the `j` of `/relations/{j}/attrs/runs/{k}`. An edge that resolved to
+/// nothing, or to a version that is not an Eval's, has no used set. A
+/// `run_results[].eval` is matched by its `{ns}/{name}` to the records of
+/// the resolved edges; one that matches none resolved to nothing, and is
+/// `run_unknown` like a missing run.
+async fn fix_card_runs(
+    tx: &mut sqlx::Transaction<'_, Postgres>,
+    new: &NewVersion<'_>,
+    resolved: &mut [Option<ResolvedVersion>],
+    readable_ns: &[String],
+) -> Result<CardRuns, StoreError> {
+    // Lock the Evals the `core/uses_eval` edges resolved to, and re-check
+    // under the lock that the writer may still see each: step 5 read the
+    // visibility without a lock, and a `set_visibility` committed since
+    // must not let this Card fix a used set in an Eval its writer can no
+    // longer see (run existence would become observable). An edge into
+    // such an Eval is demoted to unresolved, exactly as if step 5 had
+    // found it private.
+    let candidates: std::collections::BTreeSet<Uuid> = new
+        .relations
+        .iter()
+        .zip(resolved.iter())
+        .filter_map(|(rel, target)| {
+            let target = target.as_ref()?;
+            (rel.relation_type == crate::relations::USES_EVAL
+                && target.record_type == RecordType::Eval.as_str())
+            .then_some(target.record_id)
+        })
+        .collect();
+    let visible = crate::used_set::lock_evals(tx, &candidates, readable_ns).await?;
+    for target in resolved.iter_mut() {
+        if target
+            .as_ref()
+            .is_some_and(|t| candidates.contains(&t.record_id) && !visible.contains(&t.record_id))
+        {
+            *target = None;
+        }
+    }
+
+    let mut uses = Vec::new();
+    let mut eval_records: BTreeMap<String, Uuid> = BTreeMap::new();
+    for (j, (rel, target)) in new.relations.iter().zip(resolved.iter()).enumerate() {
+        let (Some(target), RelationTarget::Version { ns, name, .. }) = (target, rel.target) else {
+            continue;
+        };
+        if rel.relation_type != crate::relations::USES_EVAL
+            || target.record_type != RecordType::Eval.as_str()
+        {
+            continue;
+        }
+        eval_records.insert(format!("{ns}/{name}"), target.record_id);
+        uses.push(crate::used_set::UsesEval {
+            eval_record_id: target.record_id,
+            runs: crate::used_set::UsesEval::runs_of(rel.attrs),
+            runs_path: Some(format!("/relations/{j}/attrs/runs")),
+        });
+    }
+
+    let items: Vec<(usize, &Value)> = new
+        .body
+        .get("run_results")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().enumerate().collect())
+        .unwrap_or_default();
+    if uses.is_empty() && items.is_empty() {
+        return Ok(CardRuns {
+            used: BTreeMap::new(),
+            run_results: Vec::new(),
+        });
+    }
+
+    let mut errors = Vec::new();
+    let used = crate::used_set::fix(tx, &uses, &mut errors).await?;
+
+    // The elements the server's validation let through carry the three
+    // strings; anything else is skipped rather than guessed at.
+    let mut refs = Vec::with_capacity(items.len());
+    let mut rows = Vec::with_capacity(items.len());
+    for (i, item) in items {
+        let (Some(eval), Some(run_id), Some(metric)) = (
+            item.get("eval").and_then(Value::as_str),
+            item.get("run_id").and_then(Value::as_str),
+            item.get("metric").and_then(Value::as_str),
+        ) else {
+            continue;
+        };
+        let eval_record_id = eval_records.get(eval).copied();
+        refs.push(crate::used_set::RunResultRef {
+            index: i,
+            eval_record_id,
+            run_id,
+        });
+        if let (Some(eval_record_id), Ok(ordinal)) = (eval_record_id, i32::try_from(i)) {
+            rows.push(RunResultRow {
+                ordinal,
+                eval_record_id,
+                run_id: run_id.to_owned(),
+                metric: metric.to_owned(),
+                value: item.get("value").and_then(Value::as_f64),
+                label: item.get("label").and_then(Value::as_str).map(str::to_owned),
+                by: item.get("by").filter(|b| !b.is_null()).cloned(),
+            });
+        }
+    }
+    crate::used_set::check_run_results(tx, &refs, &used, &mut errors).await?;
+    if !errors.is_empty() {
+        crate::used_set::sort_entries(&mut errors);
+        return Err(StoreError::CardRunsRejected(errors));
+    }
+    Ok(CardRuns {
+        used,
+        run_results: rows,
+    })
+}
+
+/// Step 8 for a Card's `run_results[]`: one row per element, in one
+/// statement.
+async fn insert_run_results(
+    tx: &mut sqlx::Transaction<'_, Postgres>,
+    version_id: Uuid,
+    rows: &[RunResultRow],
+) -> Result<(), StoreError> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let ordinals: Vec<i32> = rows.iter().map(|r| r.ordinal).collect();
+    let evals: Vec<Uuid> = rows.iter().map(|r| r.eval_record_id).collect();
+    let run_ids: Vec<String> = rows.iter().map(|r| r.run_id.clone()).collect();
+    let metrics: Vec<String> = rows.iter().map(|r| r.metric.clone()).collect();
+    let values: Vec<Option<f64>> = rows.iter().map(|r| r.value).collect();
+    let labels: Vec<Option<String>> = rows.iter().map(|r| r.label.clone()).collect();
+    let bys: Vec<Option<Value>> = rows.iter().map(|r| r.by.clone()).collect();
+    sqlx::query!(
+        "INSERT INTO run_results (version_id, ordinal, eval_record_id, run_id, metric, value, label, by)
+         SELECT $1, o, e, i, m, v, l, b
+         FROM UNNEST($2::int4[], $3::uuid[], $4::text[], $5::text[], $6::float8[], $7::text[], $8::jsonb[])
+           AS t (o, e, i, m, v, l, b)",
+        version_id,
+        &ordinals,
+        &evals,
+        &run_ids,
+        &metrics,
+        &values as &[Option<f64>],
+        &labels as &[Option<String>],
+        &bys as &[Option<Value>],
+    )
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
 /// The digests among `attachments` with no `ready` row, in input order,
 /// deduplicated.
 async fn missing_attachments(
@@ -871,10 +1137,20 @@ async fn missing_attachments(
         .collect())
 }
 
-/// The `version_id` of `{ns}/{name}@{seq}`, of the given kind or, when
-/// none is given, of whichever kind has it if exactly one does. Only
-/// versions visible to `readable_ns` are candidates, so an invisible one
-/// neither resolves nor makes a visible one ambiguous.
+/// A relation target resolved at ingest: the version, and the record it
+/// belongs to (the used set of a `core/uses_eval` edge is fixed per Eval
+/// record, not per version).
+#[derive(Debug, Clone)]
+struct ResolvedVersion {
+    version_id: Uuid,
+    record_id: Uuid,
+    record_type: String,
+}
+
+/// `{ns}/{name}@{seq}`, of the given kind or, when none is given, of
+/// whichever kind has it if exactly one does. Only versions visible to
+/// `readable_ns` are candidates, so an invisible one neither resolves nor
+/// makes a visible one ambiguous.
 async fn resolve_version(
     tx: &mut sqlx::Transaction<'_, Postgres>,
     ns: &str,
@@ -882,9 +1158,9 @@ async fn resolve_version(
     seq: i32,
     record_type: Option<RecordType>,
     readable_ns: &[String],
-) -> Result<Option<Uuid>, StoreError> {
+) -> Result<Option<ResolvedVersion>, StoreError> {
     let rows = sqlx::query!(
-        "SELECT v.version_id, r.type AS record_type, r.visibility
+        "SELECT v.version_id, v.record_id, r.type AS record_type, r.visibility
          FROM versions v JOIN records r ON r.id = v.record_id
          WHERE r.ns = $1 AND r.name = $2 AND v.seq = $3
            AND ($4::text IS NULL OR r.type = $4)
@@ -896,14 +1172,19 @@ async fn resolve_version(
     )
     .fetch_all(&mut **tx)
     .await?;
-    let visible: Vec<Uuid> = rows
+    let mut visible: Vec<ResolvedVersion> = rows
         .into_iter()
         .filter(|r| crate::relations::visible_to(&r.visibility, ns, readable_ns))
-        .map(|r| r.version_id)
+        .map(|r| ResolvedVersion {
+            version_id: r.version_id,
+            record_id: r.record_id,
+            record_type: r.record_type,
+        })
         .collect();
-    Ok(match visible.as_slice() {
-        [one] => Some(*one),
-        _ => None,
+    Ok(if visible.len() == 1 {
+        visible.pop()
+    } else {
+        None
     })
 }
 
