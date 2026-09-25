@@ -93,16 +93,65 @@
 //! (?, ?)` clause; the cursor's opaque, signed encoding is the server's
 //! business.
 //!
+//! # The second target: the run projection
+//!
+//! `GET /evals/{ns}/{name}/runs` reads one row per run of one Eval, joined
+//! with the `run_results` of the Cards the request names (`cards=`). It
+//! speaks the same grammar — `where`, `sort`, `limit`, `cursor` — against
+//! a different path table, and compiles to a different IR:
+//!
+//! ```text
+//! JSON ──▶ grammar::parse                          (unchanged)
+//!      ──▶ typecheck::check  against PathTable::for_runs(cards)
+//!      ──▶ ir::RunQuery      { cards, filter, sort, limit, cursor: RunCursor }
+//! ```
+//!
+//! [`PathTable::for_runs`] is built by hand, not from a record schema: the
+//! run's columns (`run_id`, `status`, `error.kind`, `started_at`,
+//! `ended_at`), the keys of its six facets (the Eval header's key set,
+//! `model.id` and so on), `fingerprint.{facet}`, `metrics[{ns}/{name}]`,
+//! `results[{card}][{metric}].value` and `.label` for the named Cards, and
+//! `ext.*` through the same [`PathTable::with_ext`]. Parameters are
+//! bracketed, as in `results[core/pass_rate].value`, because a slug may
+//! contain `.` and `/`; the dotted forms are refused with a hint. A Card
+//! the request did not name is `unknown_path`, and so is a malformed metric
+//! id; a metric the registry does not know is accepted, because a run's
+//! metrics are.
+//!
+//! ```json
+//! {
+//!   "where": {"and": [
+//!     {"path": "status", "op": "eq", "value": "ok"},
+//!     {"path": "metrics[core/tokens_out]", "op": "lt", "value": 4000},
+//!     {"path": "results[alice/judge][core/pass].value", "op": "gte", "value": 1}
+//!   ]},
+//!   "sort": [{"path": "metrics[core/duration_ms]", "dir": "asc"}]
+//! }
+//! ```
+//!
+//! Every path of the projection sorts and ranges as its type allows
+//! (a boolean facet key does not range), facet keys included, except an
+//! unregistered `ext` key, which answers `eq` and `exists` only because
+//! nothing declares its type. The projection is scoped to one Eval and
+//! cannot grow into a scan of the hub; the `not_indexed` rule above is
+//! about record queries.
+//! Paging is keyset on `(sort key, run_id)` with [`ir::RunCursor`], which
+//! the server signs exactly as it signs [`ir::Cursor`]. Which Eval, whether
+//! archived and deleted runs are included (`include=archived,deleted`) and
+//! which Cards a caller may name are the server's decisions, not the
+//! DSL's. The [`typecheck`] module doc has the full table.
+//!
 //! # Modules
 //!
 //! - [`grammar`] — the `dsl-kit` definition and the parser it yields.
-//! - [`typecheck`] — the schema-derived path table and the type rules.
-//! - [`ir`] — the tree handed to the store.
+//! - [`typecheck`] — the path tables (schema-derived for records, built by
+//!   hand for runs) and the type rules.
+//! - [`ir`] — the trees handed to the store, [`Query`] and [`RunQuery`].
 
 pub mod grammar;
 pub mod ir;
 pub mod typecheck;
 
 pub use grammar::{Filter, MatchTerm, ScalarOp, parse, request_schema};
-pub use ir::Query;
-pub use typecheck::{ExtSchema, Indexed, PathInfo, PathTable, check, compile};
+pub use ir::{CardRef, Query, RunCursor, RunQuery};
+pub use typecheck::{ExtSchema, Indexed, PathInfo, PathTable, check, compile, compile_runs};

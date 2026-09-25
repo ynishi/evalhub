@@ -18,11 +18,17 @@
 //! `path` is a string at this stage; its meaning is assigned in
 //! [`crate::typecheck`].
 //!
-//! `any` with `match` is the one non-trivial construct. It applies to array
-//! paths (`results`, `relations`, `attachments`, `runs`) and matches if any
-//! element satisfies every key in `match`; a key's value is either a literal
-//! (implicit `eq`) or `{ op, value }`. This is how `results` is filtered by
-//! metric and value at once without exposing array indices.
+//! `any` with `match` is the one non-trivial construct. It applies to the
+//! array paths of a record (`results`, `relations`, `attachments`) and
+//! matches if any element satisfies every key in `match`; a key's value is
+//! either a literal (implicit `eq`) or `{ op, value }`. This is how
+//! `results` is filtered by metric and value at once without exposing array
+//! indices. An Eval's runs are not an array path: they are rows of their
+//! own, read through the run projection, whose table has no array paths
+//! (see [`crate::typecheck`]).
+//!
+//! The grammar is the same for both targets, record queries and the run
+//! projection; only the path table a request is checked against differs.
 //!
 //! # Two shapes of vocabulary, and which one is hand-written
 //!

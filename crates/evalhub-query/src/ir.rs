@@ -9,12 +9,35 @@
 //! this crate free of SQL.
 //!
 //! ```text
-//! Query { record_type, filter, sort, limit, cursor, expand, version }
+//! Query    { record_type, filter, sort, limit, cursor, expand, version }
+//! RunQuery { cards, filter, sort, limit, cursor: RunCursor }
 //! Filter := And(Vec) | Or(Vec) | Not(Box) | Cmp { column, op, value }
 //!         | Exists { column } | Any { table, conditions: Vec<Cmp> }
 //! Column := Generated(name) | Fingerprint(facet) | Ext { path, ty } | Body(json_path)
-//! Cursor := { keys: Vec<Value>, version_id }   // decoded; encoding is the server's
+//!         | Array(column) | Run(RunColumn)
+//! RunColumn := RunId | Status | ErrorKind | StartedAt | EndedAt | Facet(json_path)
+//!            | Fingerprint(facet) | Metric(id) | Result { card, metric, field }
+//! Cursor    := { keys: Vec<Value>, version_id }   // decoded; encoding is the server's
+//! RunCursor := { keys: Vec<Value>, run_id }       // the same, for the run projection
 //! ```
+//!
+//! # Two targets
+//!
+//! [`Query`] searches records (`POST /cards/query`, `POST /evals/query`):
+//! one row per version. [`RunQuery`] reads the run projection of one Eval
+//! (`GET /evals/{ns}/{name}/runs`): one row per run of that Eval, joined
+//! with the `run_results` of the Cards the request names. The filter tree
+//! is shared — the grammar does not change between them — but the columns
+//! a run query resolves to are [`Column::Run`], plus [`Column::Ext`] and
+//! [`Column::Body`] for the run's own `ext`, which in a [`RunQuery`] are
+//! paths below the *run's* body, not a version's. A record query never
+//! contains [`Column::Run`], and a run query never contains
+//! [`Column::Generated`], [`Column::Fingerprint`] or [`Column::Array`];
+//! a backend may refuse either stray as unsupported.
+//!
+//! The run projection has its own cursor, [`RunCursor`], because the row
+//! it pages over is keyed by `run_id` (unique within the Eval), not by a
+//! `version_id`.
 //!
 //! The IR is `serde`-serialisable so a query can be snapshot-tested end to
 //! end: JSON in, IR out, without a database.
@@ -182,6 +205,8 @@ pub enum Column {
     /// A registered `ext` path, served by an expression index. The
     /// compiler must render the *same* expression text the index was
     /// created with, which is why the path and the type travel together.
+    /// In a [`RunQuery`] the path is below the run's body, not a
+    /// version's.
     Ext {
         /// JSON path segments below the document root, `ext` included.
         path: Vec<String>,
@@ -190,11 +215,143 @@ pub enum Column {
     },
     /// Any other path, served by the GIN index over the whole body.
     /// Only equality and existence are allowed here, which is what that
-    /// index answers.
+    /// index answers. In a [`RunQuery`] the path is below the run's body
+    /// (an unregistered `ext` key of the run).
     Body(Vec<String>),
     /// A column of the side table an `any` condition ranges over.
     Array(ArrayColumn),
+    /// A column of the run projection. Only a [`RunQuery`] carries these.
+    Run(RunColumn),
 }
+
+/// Where a value of the run projection lives. One variant per storage
+/// decision of the run tables: a column of `runs`, the run's body, the
+/// `run_fingerprints` / `run_metrics` side tables, or a Card's
+/// `run_results` joined by `run_id`.
+///
+/// Every column is scoped to the runs of one Eval: the projection is read
+/// through `GET /evals/{ns}/{name}/runs`, never across Evals.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunColumn {
+    /// `runs.run_id`. A string, unique within the Eval.
+    RunId,
+    /// `runs.status`: `ok`, `error` or `skipped`.
+    Status,
+    /// `runs.error_kind`, the producer's slug; null unless `status` is
+    /// `error`.
+    ErrorKind,
+    /// `runs.started_at`. The DSL types it as a string (RFC 3339); a
+    /// backend compares it as a timestamp.
+    StartedAt,
+    /// `runs.ended_at`, as [`RunColumn::StartedAt`].
+    EndedAt,
+    /// A key of one of the run's six facets, as JSON path segments below
+    /// the run's body (`["model", "id"]`). The run stores its facets after
+    /// the header's defaults were copied onto it, so this is the run's
+    /// own condition, never the header's.
+    Facet(Vec<String>),
+    /// The fingerprint of one of the run's facets (`run_fingerprints`),
+    /// hex-encoded as the API returns it.
+    Fingerprint(String),
+    /// One of the run's own `metrics`, by registry id `{ns}/{name}`
+    /// (`run_metrics`). A run without that metric has no value: a
+    /// comparison is false for it, and it sorts as the backend sorts nulls.
+    Metric(String),
+    /// A judgement from one of the Cards the request names: that Card's
+    /// latest live version's `run_results` entry for this run and
+    /// `metric`. A run the Card did not judge on that metric has no value.
+    Result {
+        /// The Card, as named in the request.
+        card: CardRef,
+        /// The `run_results[].metric`, `{ns}/{name}`.
+        metric: String,
+        /// Which field of the entry.
+        field: ResultField,
+    },
+}
+
+/// Which field of a Card's `run_results` entry a [`RunColumn::Result`]
+/// reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResultField {
+    /// `run_results[].value`, a number.
+    Value,
+    /// `run_results[].label`, a string.
+    Label,
+}
+
+/// A Card named by a run projection request: `{ns}/{name}`, joined at its
+/// latest live version.
+///
+/// `GET /evals/{ns}/{name}/runs?cards=…` names the Cards whose judgements
+/// the projection carries, and each is joined at the version a reader
+/// would get from `GET /cards/{ns}/{name}`. There is no `@seq` form: the
+/// projection answers "what do these graders say about these runs now",
+/// and a Card's earlier versions remain readable on their own. Whether the
+/// caller may see each Card is the server's decision, made before the
+/// path table is built; this crate only knows the names.
+///
+/// Both parts follow the registry id rule (`[a-z0-9][a-z0-9._-]*`), so a
+/// Card reference never contains `[`, `]` or a second `/`, which is what
+/// lets `results[{card}][{metric}]` be split without escaping.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct CardRef(String);
+
+impl CardRef {
+    /// Parse `{ns}/{name}`, or `None` when it is not of that form.
+    pub fn parse(s: &str) -> Option<Self> {
+        evalhub_core::validate::is_valid_id(s).then(|| Self(s.to_string()))
+    }
+
+    /// The text form, `{ns}/{name}`.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// The namespace part.
+    pub fn ns(&self) -> &str {
+        self.0.split_once('/').map_or("", |(ns, _)| ns)
+    }
+
+    /// The name part.
+    pub fn name(&self) -> &str {
+        self.0.split_once('/').map_or("", |(_, name)| name)
+    }
+}
+
+impl std::fmt::Display for CardRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::str::FromStr for CardRef {
+    type Err = InvalidCardRef;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse(s).ok_or_else(|| InvalidCardRef(s.to_string()))
+    }
+}
+
+impl TryFrom<String> for CardRef {
+    type Error = InvalidCardRef;
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        s.parse()
+    }
+}
+
+impl From<CardRef> for String {
+    fn from(card: CardRef) -> Self {
+        card.0
+    }
+}
+
+/// The text was not a Card reference of the form `{ns}/{name}`.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("not a Card reference of the form {{ns}}/{{name}}: {0:?}")]
+pub struct InvalidCardRef(pub String);
 
 /// The columns an `any` condition may compare, one set per table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -264,6 +421,10 @@ pub enum SortKey {
     Metric(String),
     /// When the version was stored.
     CreatedAt,
+    /// A column of the run projection. Only a [`RunQuery`] carries these;
+    /// a run query sorts on a registered `ext` path of the run with
+    /// [`SortKey::Column`] and [`Column::Ext`].
+    Run(RunColumn),
 }
 
 /// Sort direction.
@@ -286,4 +447,47 @@ pub struct Cursor {
     pub keys: Vec<Value>,
     /// The last row's version id.
     pub version_id: uuid::Uuid,
+}
+
+/// A checked, resolved read of one Eval's run projection, ready for a
+/// backend to compile.
+///
+/// Which Eval, and whether archived and deleted runs are included
+/// (`include=archived,deleted`, members only), are the server's to decide
+/// and pass beside this; the DSL knows neither. With no sort the backend
+/// orders by `run_id` ascending.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RunQuery {
+    /// The Cards whose `run_results` are joined, in the order the request
+    /// named them. Every [`RunColumn::Result`] in the filter and the sort
+    /// names one of these; the projection carries all of them whether or
+    /// not a condition mentions them.
+    pub cards: Vec<CardRef>,
+    /// The predicate. `None` matches every run the server lets through.
+    pub filter: Option<Filter>,
+    /// Sort keys, most significant first. `run_id` is always the final,
+    /// implicit tie-breaker.
+    pub sort: Vec<Sort>,
+    /// Page size the caller asked for, already clamped by the server.
+    pub limit: u32,
+    /// Where the previous page stopped, decoded and verified by the server.
+    pub cursor: Option<RunCursor>,
+}
+
+/// Where the previous page of a run projection stopped: the sort keys of
+/// its last row and that row's `run_id`, which breaks ties and makes the
+/// tuple unique within the Eval.
+///
+/// [`Cursor`] cannot serve here, because its tie-breaker is a
+/// `version_id` and a run is not a version. The server treats this exactly
+/// as it treats a [`Cursor`]: serialises it as JSON, signs the bytes, and
+/// hands the client an opaque string; on the next request it verifies the
+/// signature and deserialises. The store only compares against it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RunCursor {
+    /// One value per entry of [`RunQuery::sort`], in the same order. A run
+    /// with no value for a key (a metric it lacks) carries `null`.
+    pub keys: Vec<Value>,
+    /// The last row's `run_id`.
+    pub run_id: String,
 }

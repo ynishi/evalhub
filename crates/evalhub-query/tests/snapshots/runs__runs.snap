@@ -1,0 +1,60 @@
+---
+source: crates/evalhub-query/tests/runs.rs
+expression: query
+---
+{
+  "cards": [
+    "c/d"
+  ],
+  "filter": {
+    "and": [
+      {
+        "cmp": {
+          "column": {
+            "run": "status"
+          },
+          "op": "eq",
+          "value": "ok"
+        }
+      },
+      {
+        "cmp": {
+          "column": {
+            "run": {
+              "metric": "a/b"
+            }
+          },
+          "op": "lt",
+          "value": 4000
+        }
+      },
+      {
+        "cmp": {
+          "column": {
+            "run": {
+              "result": {
+                "card": "c/d",
+                "metric": "a/b",
+                "field": "value"
+              }
+            }
+          },
+          "op": "gte",
+          "value": 1
+        }
+      }
+    ]
+  },
+  "sort": [
+    {
+      "key": {
+        "run": {
+          "metric": "a/b"
+        }
+      },
+      "dir": "desc"
+    }
+  ],
+  "limit": 50,
+  "cursor": null
+}
