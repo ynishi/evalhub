@@ -31,6 +31,18 @@ pub const POSTGRES_TAG: &str = "16";
 
 /// Start a container, migrate, connect.
 pub async fn db() -> Db {
+    let db = db_unmigrated().await;
+    evalhub_store::pool::migrate(&db.pool)
+        .await
+        .expect("migrate");
+    db
+}
+
+/// Start a container and connect, with nothing applied: for the tests of
+/// the migration runner itself, which apply the SQL half on its own
+/// (`evalhub_store::MIGRATOR.run`) to stand where a 0.1.x database stands
+/// after the 0.2.0 DDL and before the data step.
+pub async fn db_unmigrated() -> Db {
     let container = Postgres::default()
         .with_tag(POSTGRES_TAG)
         .start()
@@ -44,7 +56,6 @@ pub async fn db() -> Db {
     let pool = evalhub_store::pool::connect(&url, 4)
         .await
         .expect("connect");
-    evalhub_store::pool::migrate(&pool).await.expect("migrate");
     Db { container, pool }
 }
 

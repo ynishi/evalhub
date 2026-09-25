@@ -550,11 +550,11 @@ async fn lock_with_header(
 }
 
 /// One element after the checks: everything the write needs.
-struct Checked {
-    run_id: String,
+pub(crate) struct Checked {
+    pub(crate) run_id: String,
     /// Stored body: materialised, `run_id` set, canonical form.
     body: Value,
-    content_hash: [u8; 32],
+    pub(crate) content_hash: [u8; 32],
     status: String,
     error_kind: Option<String>,
     started_at: Option<DateTime<Utc>>,
@@ -747,8 +747,10 @@ pub(crate) async fn write_runs(
 }
 
 /// Canonicalise and hash a run that passed validation, and extract the
-/// columns and side rows from it.
-fn prepare(
+/// columns and side rows from it. Shared with the one-shot data migration
+/// ([`crate::data_migrations`]), which writes converted 1.0 runs without
+/// the validation, lock and audit of [`write_runs`].
+pub(crate) fn prepare(
     run_id: &str,
     mut body: Value,
     attachments: Vec<(String, [u8; 32])>,
@@ -811,7 +813,10 @@ fn prepare(
 
 /// `attachments[]` as `(path, sha256)`, decoding each digest; a digest
 /// that is not 64 hex characters is a `schema` error at its sha256.
-fn decode_attachments(body: &Value, errors: &mut Vec<ErrorEntry>) -> Vec<(String, [u8; 32])> {
+pub(crate) fn decode_attachments(
+    body: &Value,
+    errors: &mut Vec<ErrorEntry>,
+) -> Vec<(String, [u8; 32])> {
     let mut out = Vec::new();
     let Some(list) = body.get("attachments").and_then(Value::as_array) else {
         return out;
@@ -838,7 +843,7 @@ fn decode_attachments(body: &Value, errors: &mut Vec<ErrorEntry>) -> Vec<(String
 }
 
 /// Insert or overwrite the run row and replace its side rows.
-async fn upsert(
+pub(crate) async fn upsert(
     tx: &mut Transaction<'_, Postgres>,
     record_id: Uuid,
     c: &Checked,
@@ -937,7 +942,7 @@ async fn upsert(
 
 /// Recompute `records.runs_hash` from every run row of the record,
 /// archived and tombstoned included, store it and return it.
-async fn recompute_runs_hash(
+pub(crate) async fn recompute_runs_hash(
     tx: &mut Transaction<'_, Postgres>,
     record_id: Uuid,
 ) -> Result<Vec<u8>, StoreError> {

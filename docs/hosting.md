@@ -156,6 +156,108 @@ notes before a major version.
 `fly logs --app evalhub` follows the JSON log; `fly status --app evalhub`
 shows the Machines and the last release.
 
+`evalhub migrate` applies the SQL migrations and then any one-shot data
+migration the release carries, and prints one line per data migration it
+applied (`applied data migration <name>: …`), or `no data migration
+pending`. `serve` counts a data migration that has not run as pending,
+exactly like a SQL one.
+
+## Upgrading to 0.2.0
+
+0.2.0 is not deployed like every later release. Its `migrate` carries a
+data migration, `0003_runs_split`, that rewrites stored data: every Eval
+version body loses its `runs[]` (they become run rows), its `schema`
+becomes `evalhub.eval/2.0` and its `content_hash` changes (the audit log
+keeps each old and new hash, action `migration.runs_split`), and each
+Card's used runs are rebuilt from the Eval version it points at.
+
+The reason for the different procedure is the window a plain `fly deploy`
+leaves open. The release command runs `migrate` first, and only then is
+the serving Machine rolled; until it is, the *old* binary is still
+serving against the migrated database. An Eval posted to it in that
+window is stored as a 1.0 body with `runs[]` inside and no run rows,
+which is exactly what the migration has just removed, and nothing would
+ever split it (the migration runs once; the new binary converts a 1.0
+body only when it is posted). So writes stop before the migration and
+resume only with the new binary.
+
+With `flyctl` logged in, from the checkout of the 0.2.0 tag:
+
+1. **Snapshot the production Postgres.** The data step is one
+   transaction and rolls back whole if it fails, but it rewrites data
+   that exists nowhere else, so take a copy first:
+
+   ```bash
+   fly volumes list --app evalhub-db                 # the cluster's volume id
+   fly volumes snapshots create <volume-id> --app evalhub-db
+   fly volumes snapshots list <volume-id> --app evalhub-db
+   ```
+
+   A `pg_dump` in hand as well (Backups and leaving, below) costs a few
+   minutes and does not depend on Fly to restore.
+
+2. **Stop the serving Machine, so writes stop.** `fly.toml` sets
+   `auto_start_machines = true`, which makes the Fly proxy start a
+   stopped Machine on the next request; turn that off for the Machine
+   before stopping it, or a request arriving in between brings the old
+   binary back by itself:
+
+   ```bash
+   fly machine list --app evalhub                    # the serving Machine's id
+   fly machine update <machine-id> --autostart=false --skip-start --app evalhub
+   fly machine stop <machine-id> --app evalhub
+   curl -fsS https://evalhub.fly.dev/api/v1/healthz  # must fail now
+   ```
+
+3. **Deploy.**
+
+   ```bash
+   fly deploy --ha=false
+   ```
+
+   The release command's log (in the deploy output, or `fly logs`) shows
+   `applied data migration 0003_runs_split: <n> Eval(s), …, <k> with
+   unmatched run ids`. The release command has a default timeout of 5
+   minutes (`fly deploy --release-command-timeout`); the data step is one
+   transaction, so a timeout rolls it back and leaves it pending, and the
+   fix is to deploy again with a longer timeout. The data step is part of the release command, so
+   if it fails the release fails closed: the deploy stops, the Machine
+   is not updated, and the database has no run rows and no rewritten
+   bodies (the `0003` DDL, which only adds tables and a column, stays
+   applied; the old binary does not read them). A run id the migration
+   refuses is named in the error, with its Eval and version. Fix the
+   data or ask, and deploy again; to serve with the old binary in the
+   meantime, `fly machine update <machine-id> --autostart=true` and
+   `fly machine start <machine-id>`.
+
+   The deploy rewrites the Machine's configuration from `fly.toml`,
+   which turns autostart back on. If `fly status --app evalhub` still
+   shows the Machine stopped afterwards, `fly machine start <machine-id>
+   --app evalhub`.
+
+4. **Check it.**
+
+   ```bash
+   fly releases --app evalhub                        # the new release, complete
+   fly ssh console --app evalhub -C "evalhub --version"   # evalhub 0.2.0
+   curl -fsS https://evalhub.fly.dev/api/v1/healthz
+   curl -fsS https://evalhub.fly.dev/openapi.json | jq -r .info.version   # 1.0.0
+   bash deploy/fly/smoke.sh
+   ```
+
+   The running release is what `fly releases` and the binary's
+   `--version` say. `/api/v1/healthz` answers only `{status, database}`,
+   and `info.version` in `/openapi.json` is the API contract's version
+   (`1.0.0`), which 0.2.0 does not change; both confirm the server is up
+   and serving the contract, not which release it is.
+
+   `migration.card_runs_unmatched` audit rows are expected: 0.1.x never
+   checked a Card's `attrs.runs`, and the ids that named no run are
+   skipped and recorded there, not errors.
+
+Releases after 0.2.0 go back to the plain `fly deploy --ha=false` above,
+unless their release notes say otherwise.
+
 ## A custom domain
 
 ```bash
@@ -188,8 +290,10 @@ service is a valid starting point for them.
 
 `GET /api/v1/healthz` answers `200` once the server is up; it does not
 touch the database, and it is what `fly.toml` polls. `GET /openapi.json`
-is the contract the UI and every client are generated from, and a quick
-way to confirm which version is running.
+is the contract the UI and every client are generated from; its
+`info.version` is the API contract's version, which moves only when the
+contract does, not the release. Which release is running is `fly releases
+--app evalhub`, or `fly ssh console --app evalhub -C "evalhub --version"`.
 
 ## Not in this file
 

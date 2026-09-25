@@ -107,6 +107,25 @@
 //! tables, `records.runs_hash` and `audit`: a batch lands whole or not at
 //! all.
 //!
+//! # A version is write-once
+//!
+//! A version row, once committed, is never rewritten: a correction is a
+//! new version, and the only change a version ever sees is its tombstone
+//! (below) or a label moving onto or off it. `content_hash` is the hash of
+//! the stored body, and a relation, a Card's used set or an outside reader
+//! can hold a `version_id` and trust that what it names does not change.
+//!
+//! There is exactly one exception, and it is not a code path a request can
+//! reach: the data migration `0003_runs_split`
+//! ([`data_migrations`], run once by `evalhub migrate` for release 0.2.0)
+//! replaces every live `evalhub.eval/1.0` body with its 2.0 header (the
+//! body without `runs`, `schema` `evalhub.eval/2.0`) and recomputes its
+//! `content_hash`, after moving the runs into rows. Each rewrite writes an
+//! audit row (`migration.runs_split`) with the old and new hashes. No other
+//! migration, and no other function in this crate, updates a version's
+//! body or `content_hash`; a future one that had to would be a second
+//! exception named here.
+//!
 //! # Tombstones
 //!
 //! Deleting a version sets `tombstoned_at`, a `tombstone_reason`
@@ -152,6 +171,8 @@
 //! # Modules
 //!
 //! - [`pool`] — connection pool and migration runner.
+//! - [`data_migrations`] — the one-shot data steps `evalhub migrate` runs
+//!   after the SQL migrations (`0003_runs_split`: 0.1.x run bodies to rows).
 //! - [`auth`] — users, namespaces and tokens: the identity rows.
 //! - [`records`] — names, versions, labels, tombstones, idempotent create,
 //!   the 1.0 → 2.0 split at ingest, the run summary of an Eval.
@@ -171,6 +192,7 @@
 
 pub mod audit;
 pub mod auth;
+pub mod data_migrations;
 pub mod error;
 pub mod index;
 pub mod objects;
