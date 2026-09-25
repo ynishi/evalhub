@@ -1,0 +1,83 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT r.ns, r.visibility, u.record_id, u.run_id, u.created_at,\n                  u.archived_at IS NOT NULL AS \"archived!\"\n           FROM run_attachment_refs rr\n           JOIN runs u ON u.record_id = rr.record_id AND u.run_id = rr.run_id\n           JOIN records r ON r.id = u.record_id\n           WHERE rr.sha256 = $1\n             AND EXISTS (SELECT 1 FROM versions v\n                         WHERE v.record_id = r.id AND v.tombstoned_at IS NULL)\n           ORDER BY u.created_at, u.record_id, u.run_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "ns",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "records",
+            "name": "ns"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "visibility",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "records",
+            "name": "visibility"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "record_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "runs",
+            "name": "record_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "run_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "runs",
+            "name": "run_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "runs",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "archived!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "e3f2d86c0b38438635cd474bfc65ba8da4eb7aedac8569aa64297c8682e44363"
+}

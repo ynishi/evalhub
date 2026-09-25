@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO run_metrics (record_id, run_id, metric, value)\n             SELECT $1, $2, m, v FROM UNNEST($3::text[], $4::float8[]) AS t (m, v)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "TextArray",
+        "Float8Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "cd21205ddba46b179c7ab3a87061d9dc12a37bc441bbe7c45e5a0d04e2d0a9b2"
+}

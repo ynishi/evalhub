@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE runs\n         SET tombstoned_at = now(), tombstone_reason = $3, tombstone_note = $4,\n             body = NULL, updated_at = now()\n         WHERE record_id = $1 AND run_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "bd7093d0c25590423ef6e9aa54c5f129e396d0d994c3207fc25dd3c78cb5e10c"
+}

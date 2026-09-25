@@ -31,7 +31,40 @@
 //! attachment_refs (version_id, sha256, path)
 //! registry   (kind, ns, id, version, body jsonb, state)
 //! audit      append-only
+//!
+//! records.runs_hash                           digest over every run of an Eval
+//! runs       (record_id, run_id, status, error_kind, started_at, ended_at,
+//!             body jsonb, content_hash, archived_at,
+//!             tombstoned_at, tombstone_reason, tombstone_note)
+//! run_metrics         (record_id, run_id, metric, value)
+//! run_attachment_refs (record_id, run_id, path, sha256)
+//! run_fingerprints    (record_id, run_id, facet, fingerprint)
+//! run_results    (version_id, ordinal, eval_record_id, run_id, metric, value, label, by)
+//! card_eval_runs (card_version_id, eval_record_id, run_id, content_hash)
+//! data_migrations (name, applied_at)          one-shot data steps done
 //! ```
+//!
+//! # Runs
+//!
+//! An Eval is a header, whose versions are rows of `versions` like a
+//! Card's, and a set of runs, which are rows of `runs` keyed by
+//! `(record_id, run_id)` and are *not* versions: a run is overwritten in
+//! place, archived and deleted without appending a header version
+//! ([`runs`]). Both kinds of write lock the `records` row first, so a
+//! header post and a run write to the same Eval are serialised, and
+//! `records.runs_hash` (the digest over every run, archived and deleted
+//! included; `evalhub_core::run::runs_hash`) is recomputed in the same
+//! transaction as the run write that changes it. A run's facets default to
+//! the header's: the ones it omits are copied from the latest live header
+//! when it is written, and the copy is stored and hashed, so a later header
+//! changes no run. `run_results` and `card_eval_runs` are the Card side:
+//! a Card version's per-run judgements and the runs it used, each with the
+//! content hash it saw.
+//!
+//! Release 0.2.0 still accepts an `evalhub.eval/1.0` body (header and
+//! `runs[]` together); [`records::ingest`] splits it and writes the runs
+//! through the same code as a batch, in the one transaction. See
+//! [`records`].
 //!
 //! # No EAV: the index lives on the JSON body
 //!
@@ -65,7 +98,10 @@
 //! A `POST` of a record is a single transaction touching `versions`,
 //! `fingerprints`, `results`, `relations`, `attachment_refs` and `audit`.
 //! Either the whole version exists or none of it does; there is no state in
-//! which a version is visible without its relations.
+//! which a version is visible without its relations. A run write, a batch
+//! of them included, is likewise one transaction over `runs`, its side
+//! tables, `records.runs_hash` and `audit`: a batch lands whole or not at
+//! all.
 //!
 //! # Tombstones
 //!
@@ -77,11 +113,39 @@
 //! `seq`. When a tombstone drops an attachment's reference count to zero,
 //! the GC job deletes the object.
 //!
+//! Deleting a run is the same tombstone on a `runs` row: same four
+//! reasons, `body` nulled, `run_attachment_refs` deleted, `content_hash`,
+//! `run_metrics` and `run_fingerprints` kept, so `runs_hash` does not move
+//! and a Card that used the run still has the digest it judged. A deleted
+//! `run_id` is never written again (`run_deleted`). An attachment's
+//! reference count is the sum of `attachment_refs` and
+//! `run_attachment_refs`; the GC collects an object only when both are
+//! zero.
+//!
+//! When every header version of an Eval is tombstoned the record has no
+//! latest, and its runs become unreachable (reads `None`, writes
+//! `RecordNotFound`) without any data changing.
+//!
+//! # Visibility
+//!
+//! `records.visibility` (`private` / `public`) is the only visibility
+//! there is: versions and runs follow their record. Every read filters on
+//! `visibility = 'public' OR ns = ANY(caller_namespaces)`, the SQL spelling
+//! of [`relations::visible_to`], so a private record is indistinguishable
+//! from an absent one. Runs add one rule: an archived run is readable by
+//! members of the namespace only, its reference to an attachment counts
+//! for a download by a member only ([`objects::Referencing::run_archived`]),
+//! and the envelope's archived / deleted counts are shown to members only
+//! ([`records::runs_summary`]). Write paths do not filter the record
+//! written; the server has checked `write` on the namespace.
+//!
 //! # Modules
 //!
 //! - [`pool`] — connection pool and migration runner.
 //! - [`auth`] — users, namespaces and tokens: the identity rows.
-//! - [`records`] — names, versions, labels, tombstones, idempotent create.
+//! - [`records`] — names, versions, labels, tombstones, idempotent create,
+//!   the 1.0 → 2.0 split at ingest, the run summary of an Eval.
+//! - [`runs`] — run rows: put, batch, get, archive, delete, `runs_hash`.
 //! - [`objects`] — attachment lifecycle: presign, confirm, reference count, GC.
 //! - [`relations`] — edges, resolution, traversal, the comparison view.
 //! - [`registry`] — registry entries and the `applying` transition.
@@ -102,6 +166,7 @@ pub mod query_sql;
 pub mod records;
 pub mod registry;
 pub mod relations;
+pub mod runs;
 
 /// The connection pool type handed to the server. Re-exported so that no
 /// other crate needs a direct `sqlx` dependency.

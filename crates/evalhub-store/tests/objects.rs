@@ -176,13 +176,14 @@ async fn referencing_and_gc() {
     }
     let refs = objects::referencing(pool, &referenced).await.unwrap();
     assert_eq!(refs.len(), 2);
+    assert!(refs.iter().all(|r| r.run.is_none() && !r.run_archived));
     assert!(
         refs.iter()
-            .any(|r| r.ns == "alice" && r.visibility == "public" && r.version_id == v_pub)
+            .any(|r| r.ns == "alice" && r.visibility == "public" && r.version_id == Some(v_pub))
     );
     assert!(
         refs.iter()
-            .any(|r| r.ns == "bob" && r.visibility == "private" && r.version_id == v_priv)
+            .any(|r| r.ns == "bob" && r.visibility == "private" && r.version_id == Some(v_priv))
     );
     assert!(
         objects::referencing(pool, &orphan)

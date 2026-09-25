@@ -32,9 +32,12 @@
 //! # Reference counting and GC
 //!
 //! `attachment_refs (version_id, sha256, path)` is written in the record's
-//! transaction. A tombstone deletes the version's refs; the GC job (see
-//! `evalhub_server::jobs`) deletes objects with zero refs older than a
-//! grace period, so an upload that is `ready` but not yet referenced is not
+//! transaction, and `run_attachment_refs (record_id, run_id, path,
+//! sha256)` in a run write's ([`crate::runs`]); an object's reference
+//! count is the sum over both tables. A version tombstone deletes the
+//! version's refs and a run delete the run's; the GC job (see
+//! `evalhub_server::jobs`) deletes objects with zero refs in both tables
+//! older than a grace period, so an upload that is `ready` but not yet referenced is not
 //! collected under the client. `pending` objects older than the grace
 //! period are also collected. GC deletes the object before the row: a row
 //! without an object is a harmless `ObjectNotUploaded` on the next
@@ -45,8 +48,11 @@
 //! A presigned GET for an attachment of a private record is issued only to
 //! a caller with access to that record. The URL itself is time-limited;
 //! the hub does not try to revoke it. [`referencing`] lists the records an
-//! object is attached to, which is what the download handler authorises
-//! against.
+//! object is attached to, through a version or through a run, which is
+//! what the download handler authorises against. A reference from an
+//! archived run carries `run_archived`: an archived run is visible to
+//! members of its namespace only, so that reference counts for a member
+//! only, even on a public Eval.
 //!
 //! # Backend
 //!
@@ -274,15 +280,25 @@ pub struct Completed {
 }
 
 /// A record referencing an attachment: the namespace, its visibility
-/// (`public` / `private`) and the version holding the reference.
+/// (`public` / `private`), and the version or the run holding the
+/// reference.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Referencing {
     /// Namespace of the referencing record.
     pub ns: String,
     /// `public` or `private`.
     pub visibility: String,
-    /// The version whose `attachments[]` names the object.
-    pub version_id: Uuid,
+    /// The version whose `attachments[]` names the object; `None` when the
+    /// reference is a run's (a run has no version).
+    pub version_id: Option<Uuid>,
+    /// The run whose `attachments[]` names the object, as `(record_id,
+    /// run_id)`; `None` for a version's reference.
+    pub run: Option<(Uuid, String)>,
+    /// The reference is a run's and the run is archived. An archived run
+    /// is visible to members of `ns` only, so the download check counts
+    /// this reference only for a member, whatever `visibility` says.
+    /// Always `false` for a version's reference.
+    pub run_archived: bool,
 }
 
 fn sha_from(bytes: &[u8]) -> [u8; 32] {
@@ -407,8 +423,19 @@ pub async fn missing(pool: &PgPool, shas: &[[u8; 32]]) -> Result<Vec<[u8; 32]>, 
         .collect())
 }
 
-/// Every version that references the object, with what the download
-/// handler needs to decide who may fetch it.
+/// Every version and every run that references the object, with what the
+/// download handler needs to decide who may fetch it: versions first, then
+/// runs, each oldest first.
+///
+/// A run's reference is `run_attachment_refs → runs → records`. A deleted
+/// run has no reference (its rows were dropped with the tombstone); an
+/// archived run's is returned with `run_archived`, for the caller to count
+/// only for a member of the namespace. A run of an Eval with no live header
+/// (every version tombstoned) is not returned either: nobody can read such
+/// a run ([`crate::runs::get`] answers `None`), so its reference grants no
+/// download. It still counts for the GC ([`gc_candidates`]), because the
+/// run row and its reference are kept and a new header version makes the
+/// run readable again.
 pub async fn referencing(pool: &PgPool, sha: &[u8; 32]) -> Result<Vec<Referencing>, StoreError> {
     let sha_bytes: &[u8] = sha;
     let rows = sqlx::query!(
@@ -422,24 +449,49 @@ pub async fn referencing(pool: &PgPool, sha: &[u8; 32]) -> Result<Vec<Referencin
     )
     .fetch_all(pool)
     .await?;
-    Ok(rows
+    let mut out: Vec<Referencing> = rows
         .into_iter()
         .map(|r| Referencing {
             ns: r.ns,
             visibility: r.visibility,
-            version_id: r.version_id,
+            version_id: Some(r.version_id),
+            run: None,
+            run_archived: false,
         })
-        .collect())
+        .collect();
+    let runs = sqlx::query!(
+        r#"SELECT DISTINCT r.ns, r.visibility, u.record_id, u.run_id, u.created_at,
+                  u.archived_at IS NOT NULL AS "archived!"
+           FROM run_attachment_refs rr
+           JOIN runs u ON u.record_id = rr.record_id AND u.run_id = rr.run_id
+           JOIN records r ON r.id = u.record_id
+           WHERE rr.sha256 = $1
+             AND EXISTS (SELECT 1 FROM versions v
+                         WHERE v.record_id = r.id AND v.tombstoned_at IS NULL)
+           ORDER BY u.created_at, u.record_id, u.run_id"#,
+        sha_bytes,
+    )
+    .fetch_all(pool)
+    .await?;
+    out.extend(runs.into_iter().map(|r| Referencing {
+        ns: r.ns,
+        visibility: r.visibility,
+        version_id: None,
+        run: Some((r.record_id, r.run_id)),
+        run_archived: r.archived,
+    }));
+    Ok(out)
 }
 
-/// Objects with no `attachment_refs` row that were announced more than
-/// `grace` ago, pending or ready.
+/// Objects with no `attachment_refs` row and no `run_attachment_refs` row
+/// that were announced more than `grace` ago, pending or ready.
 pub async fn gc_candidates(pool: &PgPool, grace: Duration) -> Result<Vec<[u8; 32]>, StoreError> {
     let cutoff = Utc::now() - chrono::Duration::from_std(grace).unwrap_or(chrono::Duration::MAX);
     let rows = sqlx::query!(
         "SELECT a.sha256 FROM attachments a
          WHERE a.created_at < $1
            AND NOT EXISTS (SELECT 1 FROM attachment_refs ar WHERE ar.sha256 = a.sha256)
+           AND NOT EXISTS (SELECT 1 FROM run_attachment_refs rr WHERE rr.sha256 = a.sha256)
          ORDER BY a.created_at",
         cutoff,
     )
@@ -462,7 +514,8 @@ pub async fn gc(pool: &PgPool, objects: &Objects, grace: Duration) -> Result<usi
         // row (the object itself is gone, which the next `complete` reports).
         sqlx::query!(
             "DELETE FROM attachments a WHERE a.sha256 = $1
-               AND NOT EXISTS (SELECT 1 FROM attachment_refs ar WHERE ar.sha256 = a.sha256)",
+               AND NOT EXISTS (SELECT 1 FROM attachment_refs ar WHERE ar.sha256 = a.sha256)
+               AND NOT EXISTS (SELECT 1 FROM run_attachment_refs rr WHERE rr.sha256 = a.sha256)",
             sha_bytes,
         )
         .execute(pool)

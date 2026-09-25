@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM attachments a WHERE a.sha256 = $1\n               AND NOT EXISTS (SELECT 1 FROM attachment_refs ar WHERE ar.sha256 = a.sha256)\n               AND NOT EXISTS (SELECT 1 FROM run_attachment_refs rr WHERE rr.sha256 = a.sha256)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8b9158e197eb7aefe77a8ffa2a28ea8b623e016e2da78fa2f0a58996ae196f9b"
+}

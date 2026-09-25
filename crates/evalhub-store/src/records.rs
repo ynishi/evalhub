@@ -39,6 +39,38 @@
 //! traversal in [`crate::relations`]; `external:` / `hf:` targets are
 //! stored as text and never resolve.
 //!
+//! # The `evalhub.eval/1.0` arm
+//!
+//! Release 0.2.0 still accepts an Eval body declaring `evalhub.eval/1.0`
+//! (header and `runs[]` in one body); removing this arm is the 0.3.0
+//! change. [`ingest`] converts it before step 1, with
+//! `evalhub_core::eval::split_v1`, the one implementation of the
+//! conversion:
+//!
+//! ```text
+//! 1.0 body ──split_v1──▶ 2.0 header ──▶ steps 1–8 above, as for a 2.0 post
+//!                    └─▶ runs[]     ──▶ crate::runs::write_runs, the put_batch code,
+//!                                       after step 3 or 8, same transaction, same lock
+//! ```
+//!
+//! The stored body is the 2.0 header and the returned `content_hash` is
+//! the header's, computed here (the caller's `content_hash` of the 1.0
+//! body is not used). The caller's fingerprints, relations and attachment
+//! rows were extracted from the 1.0 body and are the header's too: the
+//! conversion changes only `schema` and `runs`. The runs are already
+//! materialised from the posted header, so the run write's own
+//! materialisation copies nothing.
+//!
+//! Idempotency holds on both halves separately. Re-posting the same 1.0
+//! body hits step 3 for the header and `unchanged` for every run: no
+//! version, no run row, no audit row. Re-posting it with one more run hits
+//! step 3 for the header and creates one run row, so a 0.1.x client that
+//! appends runs no longer appends header versions. A changed header is a
+//! new version as always. A refused run refuses the whole post
+//! ([`StoreError::RunsRejected`], indexed by position in the posted
+//! `runs[]`); a `run_id` repeated inside `runs[]` is not refused (0.1.x
+//! accepted it; the last element wins and [`Converted`] lists it).
+//!
 //! # Addressing
 //!
 //! A version is addressed as `@{seq}` or `@{label}`. `seq` is the hub's;
@@ -106,6 +138,8 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::{PgPool, Postgres, QueryBuilder, Row};
 use uuid::Uuid;
+
+use evalhub_core::eval::EvalSchema;
 
 use crate::audit::{NewAudit, append};
 use crate::error::{SQLSTATE_FOREIGN_KEY, SQLSTATE_UNIQUE, StoreError, violated_constraint};
@@ -397,8 +431,52 @@ impl CreateOutcome {
     }
 }
 
+/// What the ingest of an `evalhub.eval/1.0` body did besides the header.
+/// See "The `evalhub.eval/1.0` arm" in the module doc.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Converted {
+    /// The schema the body declared: always `evalhub.eval/1.0` in release
+    /// 0.2.0. The stored header declares `evalhub.eval/2.0`.
+    pub converted_from: &'static str,
+    /// The runs split off the body, as [`crate::runs::put_batch`] reports
+    /// them: one entry per distinct `run_id`, in the order each id first
+    /// appeared in `runs[]`, and the record's `runs_hash` after the write.
+    pub runs: crate::runs::RunsWritten,
+    /// Every `run_id` that appeared more than once in `runs[]`; the last
+    /// element carrying it is the one written. 0.1.x accepted such bodies,
+    /// so the ingest does not refuse them; the server may report them.
+    pub duplicate_run_ids: Vec<String>,
+}
+
+/// Result of [`ingest`]: the header outcome and, for an
+/// `evalhub.eval/1.0` body, what happened to its runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ingested {
+    /// The header version, new or existing.
+    pub outcome: CreateOutcome,
+    /// `Some` exactly when the body declared `evalhub.eval/1.0`.
+    pub converted: Option<Converted>,
+}
+
 /// Append a version to `{type}/{ns}/{name}`, creating the name if needed,
-/// in one transaction. See the module doc for the sequence.
+/// in one transaction. [`ingest`] without the conversion report; see it
+/// for the contract.
+pub async fn create_or_append(
+    pool: &PgPool,
+    new: NewVersion<'_>,
+    new_ids: impl FnOnce() -> (Uuid, Uuid),
+    badges_for: &(dyn Fn(&IngestFacts) -> Vec<String> + Send + Sync),
+) -> Result<CreateOutcome, StoreError> {
+    Ok(ingest(pool, new, new_ids, badges_for).await?.outcome)
+}
+
+/// Append a version to `{type}/{ns}/{name}`, creating the name if needed,
+/// in one transaction. See the module doc for the sequence, and "The
+/// `evalhub.eval/1.0` arm" for an Eval body that declares
+/// `evalhub.eval/1.0`: its runs are split off and written as run rows in
+/// the same transaction, the stored body and the returned `content_hash`
+/// are the 2.0 header's (`new.content_hash` is not used for it), and
+/// [`Ingested::converted`] reports the runs.
 ///
 /// `new_ids` is called once and yields `(record_id, version_id)`; the
 /// record id is used only when the name is new, the version id only when a
@@ -409,9 +487,10 @@ impl CreateOutcome {
 /// Errors: [`StoreError::NamespaceUnknown`] when `ns` has no row,
 /// [`StoreError::AttachmentMissing`] when a referenced object is not
 /// `ready`, [`StoreError::LabelInUse`] when `label` already names a
-/// version of this record, [`StoreError::Query`] otherwise. Nothing is
+/// version of this record, [`StoreError::RunsRejected`] when a run of a
+/// 1.0 body is refused, [`StoreError::Query`] otherwise. Nothing is
 /// written on any error.
-pub async fn create_or_append(
+pub async fn ingest(
     pool: &PgPool,
     new: NewVersion<'_>,
     new_ids: impl FnOnce() -> (Uuid, Uuid),
@@ -419,7 +498,33 @@ pub async fn create_or_append(
     // transaction's awaits still has a `Send` future, which is what an
     // axum handler requires.
     badges_for: &(dyn Fn(&IngestFacts) -> Vec<String> + Send + Sync),
-) -> Result<CreateOutcome, StoreError> {
+) -> Result<Ingested, StoreError> {
+    // The 1.0 arm: split before anything else, so that every step below
+    // sees the 2.0 header as the body.
+    let split = (new.record_type == RecordType::Eval
+        && evalhub_core::eval::declared_schema(new.body) == Some(EvalSchema::V1))
+    .then(|| evalhub_core::eval::split_v1(new.body));
+    let header_owned: Option<(Value, [u8; 32])> = match &split {
+        Some(split) => {
+            let (bytes, hash) = evalhub_core::canonical::hash_value(&split.header)?;
+            let canonical: Value = serde_json::from_slice(&bytes).map_err(|e| {
+                StoreError::Canonical(evalhub_core::canonical::CanonicalError::Serialize(e))
+            })?;
+            Some((canonical, *hash.as_bytes()))
+        }
+        None => None,
+    };
+    let (body, header_hash): (&Value, &[u8; 32]) = match &header_owned {
+        Some((body, hash)) => (body, hash),
+        None => (new.body, new.content_hash),
+    };
+    let posted = new.body;
+    let new = NewVersion {
+        body,
+        content_hash: header_hash,
+        ..new
+    };
+
     let (candidate_record_id, version_id) = new_ids();
     let record_type = new.record_type.as_str();
 
@@ -470,7 +575,8 @@ pub async fn create_or_append(
     .fetch_optional(&mut *tx)
     .await?;
 
-    // Step 3: idempotent hit.
+    // Step 3: idempotent hit. A 1.0 body still writes its runs: the
+    // header is the same, the runs may not be.
     if let Some(l) = &latest
         && l.content_hash.as_slice() == new.content_hash
     {
@@ -485,8 +591,17 @@ pub async fn create_or_append(
             badges: l.badges.clone(),
             visibility,
         };
+        let converted = match &split {
+            Some(split) => {
+                Some(write_converted_runs(&mut tx, record_id, &new, split, posted).await?)
+            }
+            None => None,
+        };
         tx.commit().await?;
-        return Ok(CreateOutcome::Existing(meta));
+        return Ok(Ingested {
+            outcome: CreateOutcome::Existing(meta),
+            converted,
+        });
     }
 
     // Step 4: every referenced attachment is ready.
@@ -652,21 +767,82 @@ pub async fn create_or_append(
     )
     .await?;
 
+    // The runs of a 1.0 body, after the header they materialise from.
+    let converted = match &split {
+        Some(split) => Some(write_converted_runs(&mut tx, record_id, &new, split, posted).await?),
+        None => None,
+    };
+
     // Step 9.
     tx.commit().await?;
-    Ok(CreateOutcome::Created {
-        meta: VersionMeta {
-            record_id,
-            version_id,
-            seq,
-            label: new.label.map(str::to_owned),
-            content_hash: new.content_hash.to_vec(),
-            created_at: row.created_at,
-            changed,
-            badges,
-            visibility,
+    Ok(Ingested {
+        outcome: CreateOutcome::Created {
+            meta: VersionMeta {
+                record_id,
+                version_id,
+                seq,
+                label: new.label.map(str::to_owned),
+                content_hash: new.content_hash.to_vec(),
+                created_at: row.created_at,
+                changed,
+                badges,
+                visibility,
+            },
+            facts,
         },
-        facts,
+        converted,
+    })
+}
+
+/// Write the runs [`evalhub_core::eval::split_v1`] split off a 1.0 body,
+/// through the same code as [`crate::runs::put_batch`], inside the
+/// ingest's transaction and lock. `new.body` is the stored 2.0 header;
+/// the runs were already materialised from it, so the write's own
+/// materialisation copies nothing. `posted` is the 1.0 body as posted; a
+/// refused run is reported with its position in its `runs[]` (the last
+/// element with that id, the one the conversion kept).
+async fn write_converted_runs(
+    tx: &mut sqlx::Transaction<'_, Postgres>,
+    record_id: Uuid,
+    new: &NewVersion<'_>,
+    split: &evalhub_core::eval::SplitV1,
+    posted: &Value,
+) -> Result<Converted, StoreError> {
+    let inputs: Vec<crate::runs::RunInput<'_>> = split
+        .runs
+        .iter()
+        .map(|(run_id, body)| crate::runs::RunInput { run_id, body })
+        .collect();
+    let written = crate::runs::write_runs(
+        tx, record_id, new.ns, new.name, new.body, &inputs, new.actor,
+    )
+    .await;
+    let written = match written {
+        Ok(w) => w,
+        Err(StoreError::RunsRejected(mut rejections)) => {
+            // Positions in `split.runs` → positions in the posted `runs[]`.
+            let posted: Vec<Option<&str>> = posted
+                .get("runs")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .map(|e| e.get("run_id").and_then(Value::as_str))
+                        .collect()
+                })
+                .unwrap_or_default();
+            for r in &mut rejections {
+                if let Some(i) = posted.iter().rposition(|id| *id == Some(r.run_id.as_str())) {
+                    r.index = i;
+                }
+            }
+            return Err(StoreError::RunsRejected(rejections));
+        }
+        Err(e) => return Err(e),
+    };
+    Ok(Converted {
+        converted_from: EvalSchema::V1.id(),
+        runs: written,
+        duplicate_run_ids: split.duplicate_run_ids.clone(),
     })
 }
 
@@ -1027,8 +1203,9 @@ pub async fn body_and_badges(
 }
 
 /// Lock `{type}/{ns}/{name}` for a write and return its id and
-/// visibility, or [`StoreError::RecordNotFound`].
-async fn lock_record(
+/// visibility, or [`StoreError::RecordNotFound`]. The same `FOR UPDATE`
+/// the ingest takes; [`crate::runs`] takes it before every run write.
+pub(crate) async fn lock_record(
     tx: &mut sqlx::Transaction<'_, Postgres>,
     record_type: RecordType,
     ns: &str,
@@ -1222,6 +1399,83 @@ pub async fn tombstone(
         changed: row.changed,
         badges: row.badges,
         visibility,
+    })
+}
+
+/// Runs of an Eval by `status`, over the runs that are neither archived
+/// nor deleted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RunsByStatus {
+    /// `status = ok`.
+    pub ok: i64,
+    /// `status = error`.
+    pub error: i64,
+    /// `status = skipped`.
+    pub skipped: i64,
+}
+
+/// The `runs` block of an Eval's envelope. See [`runs_summary`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunsSummary {
+    /// Runs that are neither archived nor deleted.
+    pub count: i64,
+    /// `count`, split by `status`.
+    pub by_status: RunsByStatus,
+    /// Archived runs that are not deleted. `None` unless the reader is a
+    /// member of the namespace.
+    pub archived: Option<i64>,
+    /// Deleted (tombstoned) runs, archived or not. `None` unless the
+    /// reader is a member of the namespace.
+    pub deleted: Option<i64>,
+    /// `records.runs_hash`: the digest over every run, archived and
+    /// deleted included, the same for every reader. The hash of the empty
+    /// set (`sha256("[]")`) when no run was ever written.
+    pub runs_hash: Vec<u8>,
+}
+
+/// The run summary of the Eval `record_id` for its envelope. `member` says
+/// whether the reader is a member of the record's namespace; it decides
+/// only whether `archived` and `deleted` are filled.
+///
+/// The runs belong to the record, not to a version, so the summary is the
+/// same whichever `@seq` the reader asked for. The caller has already
+/// resolved the record under the visibility rule (and so knows it has a
+/// live header); this reads by id and filters nothing. An unknown id reads
+/// as zero runs. Cost: one aggregate over the record's runs (the primary
+/// key's prefix) and one row read.
+pub async fn runs_summary(
+    pool: &PgPool,
+    record_id: Uuid,
+    member: bool,
+) -> Result<RunsSummary, StoreError> {
+    let row = sqlx::query!(
+        r#"SELECT
+             COUNT(*) FILTER (WHERE archived_at IS NULL AND tombstoned_at IS NULL) AS "count!",
+             COUNT(*) FILTER (WHERE archived_at IS NULL AND tombstoned_at IS NULL AND status = 'ok') AS "ok!",
+             COUNT(*) FILTER (WHERE archived_at IS NULL AND tombstoned_at IS NULL AND status = 'error') AS "error!",
+             COUNT(*) FILTER (WHERE archived_at IS NULL AND tombstoned_at IS NULL AND status = 'skipped') AS "skipped!",
+             COUNT(*) FILTER (WHERE archived_at IS NOT NULL AND tombstoned_at IS NULL) AS "archived!",
+             COUNT(*) FILTER (WHERE tombstoned_at IS NOT NULL) AS "deleted!",
+             (SELECT runs_hash FROM records WHERE id = $1) AS runs_hash
+           FROM runs WHERE record_id = $1"#,
+        record_id,
+    )
+    .fetch_one(pool)
+    .await?;
+    let runs_hash = match row.runs_hash {
+        Some(h) => h,
+        None => crate::runs::empty_runs_hash()?,
+    };
+    Ok(RunsSummary {
+        count: row.count,
+        by_status: RunsByStatus {
+            ok: row.ok,
+            error: row.error,
+            skipped: row.skipped,
+        },
+        archived: member.then_some(row.archived),
+        deleted: member.then_some(row.deleted),
+        runs_hash,
     })
 }
 
