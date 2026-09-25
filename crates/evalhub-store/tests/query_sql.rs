@@ -318,6 +318,67 @@ fn card(model: &str, temperature: f64, rung: i64) -> Value {
 }
 
 #[tokio::test]
+async fn relation_filters_see_only_targets_the_caller_may_see() {
+    let db = common::db().await;
+    let pool = &db.pool;
+
+    // bob's public Card cites bob's private Eval; the edge resolved.
+    let (_, secret) = common::seed_version(pool, "eval", "bob", "secret", 1, "private", "s").await;
+    let cites = seed(pool, "bob", "cites", "public", card("qwen3.6-32b", 0.0, 4)).await;
+    sqlx::query(
+        "INSERT INTO relations (from_version_id, type, to_version_id) VALUES ($1, 'core/uses_eval', $2)",
+    )
+    .bind(cites)
+    .bind(secret)
+    .execute(pool)
+    .await
+    .unwrap();
+
+    let by = |column, op, value: Value| ir::Query {
+        filter: Some(ir::Filter::Any {
+            table: ir::ArrayTable::Relations,
+            conditions: vec![ir::Cmp {
+                column: ir::Column::Array(column),
+                op,
+                value,
+            }],
+        }),
+        ..base()
+    };
+    let exact = by(
+        ir::ArrayColumn::RelationTo,
+        ir::Op::Eq,
+        json!("bob/secret@1"),
+    );
+    let prefix = by(ir::ArrayColumn::RelationTo, ir::Op::Prefix, json!("bob/"));
+    let typed = by(
+        ir::ArrayColumn::RelationType,
+        ir::Op::Eq,
+        json!("core/uses_eval"),
+    );
+
+    // alice sees the Card, but not the edge: no filter over it matches,
+    // so the query cannot say that bob/secret@1 exists or who cites it.
+    assert_eq!(names(&run(pool, &base()).await), vec!["cites"]);
+    for q in [&exact, &prefix, &typed] {
+        assert!(run(pool, q).await.is_empty(), "{q:?}");
+    }
+    // Negated, the edge is equally absent.
+    let not = ir::Query {
+        filter: Some(ir::Filter::Not(Box::new(exact.filter.clone().unwrap()))),
+        ..base()
+    };
+    assert_eq!(names(&run(pool, &not).await), vec!["cites"]);
+
+    // bob sees both.
+    let bob = ["bob".to_string()];
+    for q in [&exact, &prefix, &typed] {
+        let (hits, _) = query_sql::run(pool, q, &bob).await.unwrap();
+        assert_eq!(names(&hits), vec!["cites"], "{q:?}");
+    }
+}
+
+#[tokio::test]
 async fn filters_over_columns_fingerprints_results_and_relations() {
     let db = common::db().await;
     let pool = &db.pool;

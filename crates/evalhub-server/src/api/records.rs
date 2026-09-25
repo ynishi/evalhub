@@ -11,9 +11,16 @@
 //!   "record": { ...the canonical body... },
 //!   "fingerprints": { "model": "…", ... },      // expand=fingerprints
 //!   "relations": [...],                          // expand=relations
+//!   "withheld": { "relations": [...] },          // elements removed for this reader
 //!   "tombstone": { "at", "reason", "note" }      // when tombstoned; record is absent
 //! }
 //! ```
+//!
+//! `withheld` is set when the reader may not see a version the record's
+//! `relations[]` points at: the element is removed from `record` and
+//! listed there as a commitment (`crate::api::relations` has the rule).
+//! `record` then differs from the stored body and `content_hash` does not
+//! match it.
 //!
 //! `POST` semantics — idempotent on `content_hash`, new `seq` otherwise —
 //! are in `evalhub_store::records`. `?label=` on `POST` labels the new
@@ -284,6 +291,11 @@ pub struct VersionEnvelope {
     /// The version's outgoing edges, with `expand=relations`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub relations: Option<Vec<crate::api::relations::RelationDto>>,
+    /// What was removed from `record` because the caller may not see it.
+    /// When present, `record` is not the stored body and does not match
+    /// `content_hash`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub withheld: Option<crate::api::relations::Withheld>,
     /// Present when the version was withdrawn; `record` is then absent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tombstone: Option<TombstoneDto>,
@@ -313,6 +325,7 @@ impl VersionEnvelope {
             record,
             fingerprints: None,
             relations: None,
+            withheld: None,
             tombstone: None,
         }
     }
@@ -582,6 +595,7 @@ async fn post(
         .collect()
     };
 
+    let readable_ns = caller.namespaces();
     let outcome = records::create_or_append(
         state.db()?,
         NewVersion {
@@ -592,6 +606,7 @@ async fn post(
             content_hash: hash.as_bytes(),
             label: query.label.as_deref(),
             actor: caller.actor(),
+            readable_ns: &readable_ns,
             fingerprints: &fingerprint_rows,
             results: &results,
             relations: &relations,
@@ -657,6 +672,13 @@ async fn get(
     .ok_or(ApiError::NotFound)?;
     let version_id = stored.meta.version_id;
     let mut env = VersionEnvelope::from_stored(stored);
+    if let Some(record) = env.record.as_mut() {
+        let hidden =
+            evalhub_store::relations::hidden_targets(pool, &[version_id], &caller_ns).await?;
+        env.withheld = hidden
+            .get(&version_id)
+            .and_then(|h| crate::api::relations::withhold(record, h));
+    }
     let expand: Vec<&str> = query
         .expand
         .as_deref()

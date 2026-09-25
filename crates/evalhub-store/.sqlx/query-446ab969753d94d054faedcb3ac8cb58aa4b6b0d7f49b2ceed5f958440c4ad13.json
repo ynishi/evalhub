@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT v.version_id, r.type AS record_type\n         FROM versions v JOIN records r ON r.id = v.record_id\n         WHERE r.ns = $1 AND r.name = $2 AND v.seq = $3\n           AND ($4::text IS NULL OR r.type = $4)\n         ORDER BY r.type",
+  "query": "SELECT v.version_id, r.type AS record_type, r.visibility\n         FROM versions v JOIN records r ON r.id = v.record_id\n         WHERE r.ns = $1 AND r.name = $2 AND v.seq = $3\n           AND ($4::text IS NULL OR r.type = $4)\n         ORDER BY r.type",
   "describe": {
     "columns": [
       {
@@ -24,6 +24,17 @@
             "name": "type"
           }
         }
+      },
+      {
+        "ordinal": 2,
+        "name": "visibility",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "records",
+            "name": "visibility"
+          }
+        }
       }
     ],
     "parameters": {
@@ -36,8 +47,9 @@
     },
     "nullable": [
       false,
+      false,
       false
     ]
   },
-  "hash": "8ef4081acc2fd5f8d0e28fe71a8e4ea2183cbc468f8a1f3b3868c9dd330ee875"
+  "hash": "446ab969753d94d054faedcb3ac8cb58aa4b6b0d7f49b2ceed5f958440c4ad13"
 }

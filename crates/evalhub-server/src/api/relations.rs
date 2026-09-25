@@ -22,6 +22,20 @@
 //! title. That is the commitment the design promises, and it is why a
 //! public Card may cite a private Eval without leaking it.
 //!
+//! The same holds for the body of the version the edge leaves. Every read
+//! that returns a record body (`GET …/{name}`, `POST …/query`) removes the
+//! `relations[]` elements whose target the reader may not see and lists
+//! them, as the same commitment, under `withheld.relations` in the
+//! envelope ([`withhold`]). A body with elements withheld is no longer the
+//! stored body, so its `content_hash` does not match it: a client that
+//! verifies the hash does so on responses without `withheld`.
+//!
+//! A write never learns more than a read. A target the writer may not see
+//! is stored unresolved, like one that does not exist, and the response
+//! and the `refs_resolved` badge are the same in both cases. Reading such
+//! an edge, a caller without access gets the text back as `unresolved`;
+//! once the target is readable to them it resolves.
+//!
 //! An `external:` or `hf:` target, and a `{ns}/{name}@{seq}` that does not
 //! exist yet, appear as text: `{ external: "…" }` and
 //! `{ unresolved: "…" }`. A Card published before the Eval it cites is
@@ -57,7 +71,8 @@ use evalhub_schema::error::{ErrorCode, ErrorEntry};
 use evalhub_store::auth::Scope;
 use evalhub_store::records::{self, RecordType};
 use evalhub_store::relations::{
-    self, Direction, EdgeEnd, RelationTarget, ResolvedTarget, StoredRelation, TraverseParams,
+    self, Direction, EdgeEnd, HiddenTarget, RelationTarget, ResolvedTarget, StoredRelation,
+    TraverseParams,
 };
 
 use crate::auth::{Auth, MaybeAuth};
@@ -162,6 +177,71 @@ impl From<ResolvedTarget> for TargetDto {
             ResolvedTarget::External(text) => Self::External { external: text },
         }
     }
+}
+
+/// What a read removed from a record body because the reader may not see
+/// it. Present in an envelope only when something was removed.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct Withheld {
+    /// One entry per removed `relations[]` element, in body order.
+    pub relations: Vec<WithheldRelation>,
+}
+
+/// A removed `relations[]` element, reduced to the commitment: the same
+/// `version_id` and `content_hash` a `private` endpoint of
+/// `GET …/relations` shows.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct WithheldRelation {
+    /// Registry id of the relation type of the element.
+    #[serde(rename = "type")]
+    pub relation_type: String,
+    /// The version it points at.
+    pub version_id: String,
+    /// sha256 of that version's canonical body.
+    pub content_hash: String,
+}
+
+/// Remove from `body.relations[]` every element whose `(type, to)` names
+/// one of `hidden`, and say what was removed. `None` when nothing was.
+///
+/// `to` is parsed rather than compared as text, so a spelling the parser
+/// accepts but the stored text does not match (`@01`) is still caught.
+pub fn withhold(body: &mut Value, hidden: &[HiddenTarget]) -> Option<Withheld> {
+    if hidden.is_empty() {
+        return None;
+    }
+    let elements = body.get_mut("relations")?.as_array_mut()?;
+    let mut removed = Vec::new();
+    elements.retain(|element| {
+        let Some(relation_type) = element.get("type").and_then(Value::as_str) else {
+            return true;
+        };
+        let Some(ParsedTarget::Version { ns, name, seq }) = element
+            .get("to")
+            .and_then(Value::as_str)
+            .and_then(parse_relation_target)
+        else {
+            return true;
+        };
+        let found = hidden.iter().find(|h| {
+            h.relation_type == relation_type
+                && h.ns == ns
+                && h.name == name
+                && i64::from(h.seq) == i64::from(seq)
+        });
+        match found {
+            Some(h) => {
+                removed.push(WithheldRelation {
+                    relation_type: h.relation_type.clone(),
+                    version_id: h.version_id.to_string(),
+                    content_hash: hex::encode(&h.content_hash),
+                });
+                false
+            }
+            None => true,
+        }
+    });
+    (!removed.is_empty()).then_some(Withheld { relations: removed })
 }
 
 /// An edge as returned by `POST …/relations`.
@@ -423,6 +503,7 @@ async fn add(
         target,
         body.attrs.as_ref(),
         (Some(id.user_id), Some(id.token_id)),
+        &caller_ns,
     )
     .await?;
     Ok((StatusCode::CREATED, Json(edge.into())))

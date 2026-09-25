@@ -56,7 +56,7 @@ use evalhub_store::records;
 use evalhub_store::registry::{self, Kind};
 use evalhub_store::{query_sql, relations};
 
-use crate::api::relations::RelationDto;
+use crate::api::relations::{RelationDto, Withheld, withhold};
 use crate::auth::MaybeAuth;
 use crate::error::ApiError;
 use crate::state::AppState;
@@ -98,6 +98,11 @@ pub struct QueryHitDto {
     /// Outgoing edges, with `expand=relations`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub relations: Option<Vec<RelationDto>>,
+    /// What was removed from `record` because the caller may not see it.
+    /// When present, `record` is not the stored body and does not match
+    /// `content_hash`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub withheld: Option<Withheld>,
 }
 
 impl From<query_sql::QueryHit> for QueryHitDto {
@@ -123,6 +128,7 @@ impl From<query_sql::QueryHit> for QueryHitDto {
             record: hit.body,
             fingerprints: None,
             relations: None,
+            withheld: None,
         }
     }
 }
@@ -207,10 +213,15 @@ async fn query(
 
     let want_fingerprints = compiled.expand.contains(&ir::Expand::Fingerprints);
     let want_relations = compiled.expand.contains(&ir::Expand::Relations);
+    let version_ids: Vec<_> = hits.iter().map(|h| h.version_id).collect();
+    let hidden = relations::hidden_targets(pool, &version_ids, &caller_ns).await?;
     let mut items = Vec::with_capacity(hits.len());
     for hit in hits {
         let version_id = hit.version_id;
         let mut dto = QueryHitDto::from(hit);
+        if let (Some(record), Some(h)) = (dto.record.as_mut(), hidden.get(&version_id)) {
+            dto.withheld = withhold(record, h);
+        }
         if want_fingerprints {
             let map = records::load_fingerprints(pool, version_id).await?;
             dto.fingerprints = Some(

@@ -12,7 +12,7 @@
 //! | `Body(json_path)` eq  | `v.body @> $` (jsonb containment, served by the GIN index)   |
 //! | `Body(json_path)` exists | `v.body @? $` (jsonpath existence)                         |
 //! | `Any { results, … }`  | `EXISTS (SELECT 1 FROM results x WHERE x.version_id = v.version_id AND …)` |
-//! | `Any { relations, … }`| likewise against `relations`                                   |
+//! | `Any { relations, … }`| likewise against `relations`, over the edges the caller may see |
 //!
 //! Queries are built with `sqlx::QueryBuilder`; every literal is a bind
 //! parameter, never interpolated. Visibility is applied unconditionally:
@@ -21,6 +21,15 @@
 //! WHERE record_id = v.record_id AND tombstoned_at IS NULL)`; `all` does
 //! not. Tombstoned versions never match either way: they have no body to
 //! match against.
+//!
+//! A relation whose resolved target the caller may not see is not a row
+//! of `relations` as far as a query is concerned: `any` over `relations`
+//! adds `AND (x.to_version_id IS NULL OR <target visible>)`, with the same
+//! predicate. The read paths remove such an element from the body the
+//! caller gets back (`withheld`); if a filter could still match it, asking
+//! for Cards whose `relations[].to` is some private `{ns}/{name}@{seq}`
+//! would say whether that version exists and who cites it. An edge stored
+//! unresolved carries only the text its writer typed and stays matchable.
 //!
 //! # What may reach the SQL text
 //!
@@ -355,7 +364,7 @@ fn build(
 
     if let Some(filter) = &query.filter {
         q.push(" AND ");
-        push_filter(&mut q, filter)?;
+        push_filter(&mut q, filter, caller_namespaces)?;
     }
 
     if let Some(cursor) = &query.cursor {
@@ -489,19 +498,23 @@ fn push_key_value(
 }
 
 /// Render a predicate.
-fn push_filter(q: &mut QueryBuilder<Postgres>, filter: &ir::Filter) -> Result<(), StoreError> {
+fn push_filter(
+    q: &mut QueryBuilder<Postgres>,
+    filter: &ir::Filter,
+    caller_namespaces: &[String],
+) -> Result<(), StoreError> {
     match filter {
-        ir::Filter::And(children) => push_junction(q, children, "AND", "TRUE"),
-        ir::Filter::Or(children) => push_junction(q, children, "OR", "FALSE"),
+        ir::Filter::And(children) => push_junction(q, children, "AND", "TRUE", caller_namespaces),
+        ir::Filter::Or(children) => push_junction(q, children, "OR", "FALSE", caller_namespaces),
         ir::Filter::Not(inner) => {
             q.push("NOT (");
-            push_filter(q, inner)?;
+            push_filter(q, inner, caller_namespaces)?;
             q.push(")");
             Ok(())
         }
         ir::Filter::Cmp(cmp) => push_cmp(q, cmp, None),
         ir::Filter::Exists { column } => push_exists(q, column),
-        ir::Filter::Any { table, conditions } => push_any(q, *table, conditions),
+        ir::Filter::Any { table, conditions } => push_any(q, *table, conditions, caller_namespaces),
     }
 }
 
@@ -510,6 +523,7 @@ fn push_junction(
     children: &[ir::Filter],
     joiner: &str,
     empty: &str,
+    caller_namespaces: &[String],
 ) -> Result<(), StoreError> {
     if children.is_empty() {
         q.push(empty);
@@ -520,7 +534,7 @@ fn push_junction(
         if i > 0 {
             q.push(format!(" {joiner} "));
         }
-        push_filter(q, child)?;
+        push_filter(q, child, caller_namespaces)?;
     }
     q.push(")");
     Ok(())
@@ -584,11 +598,14 @@ fn array_column(col: ir::ArrayColumn) -> (String, ir::ValueType) {
     }
 }
 
-/// `EXISTS` over a side table, with every condition on the same row.
+/// `EXISTS` over a side table, with every condition on the same row. Over
+/// `relations`, only the edges whose target the caller may see (see the
+/// module doc).
 fn push_any(
     q: &mut QueryBuilder<Postgres>,
     table: ir::ArrayTable,
     conditions: &[ir::Cmp],
+    caller_namespaces: &[String],
 ) -> Result<(), StoreError> {
     let (name, key) = match table {
         ir::ArrayTable::Results => ("results", "version_id"),
@@ -598,6 +615,15 @@ fn push_any(
     q.push(format!(
         "EXISTS (SELECT 1 FROM {name} x WHERE x.{key} = v.version_id"
     ));
+    if table == ir::ArrayTable::Relations {
+        q.push(
+            " AND (x.to_version_id IS NULL OR EXISTS (SELECT 1 FROM versions tv \
+             JOIN records tr ON tr.id = tv.record_id WHERE tv.version_id = x.to_version_id \
+             AND (tr.visibility = 'public' OR tr.ns = ANY(",
+        );
+        q.push_bind(caller_namespaces.to_vec());
+        q.push("))))");
+    }
     for cmp in conditions {
         q.push(" AND ");
         push_cmp(q, cmp, Some(table))?;

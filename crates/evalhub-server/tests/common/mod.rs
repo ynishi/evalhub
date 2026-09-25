@@ -13,7 +13,7 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
 use serde_json::{Value, json};
 use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::core::{ContainerPort, ExecCommand, WaitFor};
+use testcontainers_modules::testcontainers::core::{ContainerPort, ExecCommand, Mount, WaitFor};
 use testcontainers_modules::testcontainers::runners::AsyncRunner;
 use testcontainers_modules::testcontainers::{ContainerAsync, GenericImage, ImageExt};
 use tower::ServiceExt;
@@ -39,13 +39,16 @@ pub struct Hub {
     pub path_tables: evalhub_server::state::PathTableHandle,
 }
 
-/// MinIO image. `minio/minio` on Docker Hub is no longer pullable; the
-/// same builds are published on quay.io, and
+/// MinIO image. Neither `minio/minio` on Docker Hub nor
+/// `quay.io/minio/minio` can be pulled anonymously any more (quay.io
+/// started answering `401` in September 2026), so the Chainguard build is
+/// used. It ships `mc` and a shell, which the bucket setup below needs.
 /// `testcontainers_modules::minio` hard-codes the Docker Hub name, so a
 /// `GenericImage` is used instead.
-pub const MINIO_IMAGE: &str = "quay.io/minio/minio";
-/// Tag matching the one `testcontainers_modules` 0.15 pins.
-pub const MINIO_TAG: &str = "RELEASE.2025-02-28T09-55-16Z";
+pub const MINIO_IMAGE: &str = "cgr.dev/chainguard/minio";
+/// Pinned by digest: Chainguard's free tier publishes `latest` only.
+pub const MINIO_TAG: &str =
+    "latest@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1";
 /// Bucket the tests use.
 pub const BUCKET: &str = "evalhub";
 const MINIO_USER: &str = "minioadmin";
@@ -229,7 +232,11 @@ pub fn with_title(record: &str, title: &str) -> String {
 async fn start_minio() -> (ContainerAsync<GenericImage>, String) {
     let container = GenericImage::new(MINIO_IMAGE, MINIO_TAG)
         .with_exposed_port(ContainerPort::Tcp(9000))
-        .with_wait_for(WaitFor::message_on_stderr("API:"))
+        // `/data` is not a volume in this image; on the container's overlay
+        // root MinIO logs a rename error, itself starting with "API:", before
+        // it is up. A tmpfs avoids the error, and the wait names the banner.
+        .with_wait_for(WaitFor::message_on_stderr("API: http"))
+        .with_mount(Mount::tmpfs_mount("/data"))
         .with_env_var("MINIO_ROOT_USER", MINIO_USER)
         .with_env_var("MINIO_ROOT_PASSWORD", MINIO_PASSWORD)
         .with_cmd(["server", "/data", "--console-address", ":9001"])

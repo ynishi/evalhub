@@ -27,10 +27,14 @@
 //!
 //! A `{ns}/{name}@{seq}` target resolves to the `version_id` of that
 //! version, whatever its record type and whether or not it is tombstoned
-//! (a tombstone still has a `version_id`). A Card and an Eval may share
-//! `{ns}/{name}`; when the caller knows the target kind (from the relation
-//! type's registry entry) it passes it, otherwise the name must be
-//! unambiguous or the reference is stored unresolved. An unresolved target
+//! (a tombstone still has a `version_id`), provided the writer may see it
+//! ([`NewVersion::readable_ns`] plus the namespace written to). A version
+//! the writer may not see is treated exactly as one that does not exist:
+//! stored unresolved, `refs_resolved` not awarded. A Card and an Eval may
+//! share `{ns}/{name}`; when the caller knows the target kind (from the
+//! relation type's registry entry) it passes it, otherwise the name must be
+//! unambiguous among the versions the writer may see, or the reference is
+//! stored unresolved. An unresolved target
 //! keeps its text in `to_external` and is re-attempted lazily by the
 //! traversal in [`crate::relations`]; `external:` / `hf:` targets are
 //! stored as text and never resolve.
@@ -70,8 +74,10 @@
 //! namespaces and filters on them, so a private record is indistinguishable
 //! from a nonexistent one (`404`) to anyone without access. There is no
 //! query that returns a private record's existence. Write paths do not
-//! filter: the server has already checked that the caller holds `write`
-//! on the namespace, so an absent record is [`StoreError::RecordNotFound`].
+//! filter the record written: the server has already checked that the
+//! caller holds `write` on the namespace, so an absent record is
+//! [`StoreError::RecordNotFound`]. What a write *refers to* is filtered:
+//! relation targets resolve only to versions the writer may see (above).
 //!
 //! # Listing
 //!
@@ -296,6 +302,10 @@ pub struct NewVersion<'a> {
     pub label: Option<&'a str>,
     /// Who is writing.
     pub actor: Actor,
+    /// Namespaces whose private records the writer may read. Relation
+    /// targets resolve only to versions visible under these plus `ns`
+    /// itself (writing there implies reading there).
+    pub readable_ns: &'a [String],
     /// Per-facet fingerprints, `(facet, sha256)`.
     pub fingerprints: &'a [(&'a str, [u8; 32])],
     /// `results[]` as rows.
@@ -486,6 +496,10 @@ pub async fn create_or_append(
     }
 
     // Step 5: relation targets and registry lookups.
+    let mut readable_ns = new.readable_ns.to_vec();
+    if !readable_ns.iter().any(|n| n == new.ns) {
+        readable_ns.push(new.ns.to_owned());
+    }
     let mut resolved: Vec<Option<Uuid>> = Vec::with_capacity(new.relations.len());
     let mut all_refs_resolved = true;
     for rel in new.relations {
@@ -496,7 +510,8 @@ pub async fn create_or_append(
                 seq,
                 record_type,
             } => {
-                let found = resolve_version(&mut tx, ns, name, seq, record_type).await?;
+                let found =
+                    resolve_version(&mut tx, ns, name, seq, record_type, &readable_ns).await?;
                 if found.is_none() {
                     all_refs_resolved = false;
                 }
@@ -681,16 +696,19 @@ async fn missing_attachments(
 }
 
 /// The `version_id` of `{ns}/{name}@{seq}`, of the given kind or, when
-/// none is given, of whichever kind has it if exactly one does.
+/// none is given, of whichever kind has it if exactly one does. Only
+/// versions visible to `readable_ns` are candidates, so an invisible one
+/// neither resolves nor makes a visible one ambiguous.
 async fn resolve_version(
     tx: &mut sqlx::Transaction<'_, Postgres>,
     ns: &str,
     name: &str,
     seq: i32,
     record_type: Option<RecordType>,
+    readable_ns: &[String],
 ) -> Result<Option<Uuid>, StoreError> {
     let rows = sqlx::query!(
-        "SELECT v.version_id, r.type AS record_type
+        "SELECT v.version_id, r.type AS record_type, r.visibility
          FROM versions v JOIN records r ON r.id = v.record_id
          WHERE r.ns = $1 AND r.name = $2 AND v.seq = $3
            AND ($4::text IS NULL OR r.type = $4)
@@ -702,8 +720,13 @@ async fn resolve_version(
     )
     .fetch_all(&mut **tx)
     .await?;
-    Ok(match rows.as_slice() {
-        [one] => Some(one.version_id),
+    let visible: Vec<Uuid> = rows
+        .into_iter()
+        .filter(|r| crate::relations::visible_to(&r.visibility, ns, readable_ns))
+        .map(|r| r.version_id)
+        .collect();
+    Ok(match visible.as_slice() {
+        [one] => Some(*one),
         _ => None,
     })
 }
