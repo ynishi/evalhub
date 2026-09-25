@@ -1,0 +1,19 @@
+{
+  "run_id": "r1",
+  "body": {
+    "run_id": "r1",
+    "status": "error",
+    "error": {
+      "kind": "budget_exhausted",
+      "message": "out of tokens",
+      "log": "logs/stderr.txt"
+    },
+    "attachments": [
+      {
+        "path": "logs/stderr.txt",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size": 1
+      }
+    ]
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "run_id": "r1",
+  "body": {
+    "run_id": "r1",
+    "status": "ok",
+    "calls": "calls/r1.jsonl",
+    "attachments": [
+      {
+        "path": "calls/r1.jsonl",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size": 1
+      },
+      {
+        "path": "calls/r1.jsonl",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size": 1
+      },
+      {
+        "path": "/abs.txt",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size": 1
+      },
+      {
+        "path": "a/../b.txt",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size": 1
+      },
+      {
+        "path": "",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size": 1
+      }
+    ]
+  }
+}

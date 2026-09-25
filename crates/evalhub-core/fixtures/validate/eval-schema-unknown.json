@@ -1,0 +1,54 @@
+{
+  "schema": "evalhub.eval/3.0",
+  "title": "single2 K4, 33 runs",
+  "producer": {
+    "name": "my-harness",
+    "version": "0.4.1"
+  },
+  "eval_kind": "run_set",
+  "origin": "live",
+  "harness": {
+    "name": "my-harness",
+    "version": "0.4.1"
+  },
+  "model": {
+    "id": "qwen3.6-32b"
+  },
+  "task": {
+    "id": "single2",
+    "version": "3",
+    "split": "test",
+    "n": 33
+  },
+  "generation": {
+    "temperature": 0.0
+  },
+  "trial": {
+    "k": 4
+  },
+  "env": {
+    "git": {
+      "origin": "https://github.com/x/y",
+      "commit": "abc123",
+      "dirty": false
+    }
+  },
+  "relations": [
+    {
+      "type": "core/subset_of",
+      "to": "alice/single2-full@1"
+    }
+  ],
+  "attachments": [
+    {
+      "path": "tasks.jsonl",
+      "sha256": "a8b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6",
+      "size": 90210,
+      "media_type": "application/x-ndjson"
+    }
+  ],
+  "redaction": {
+    "applied": false
+  },
+  "ext": {}
+}

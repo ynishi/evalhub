@@ -7,7 +7,13 @@
 //!
 //! Seven of them, one per facet (model, task, harness, generation, trial,
 //! grading, env), computed on ingest and stored in the `fingerprints` table.
-//! An Eval has six: it carries no `grading` facet. Records with equal
+//! An Eval has six: it carries no `grading` facet.
+//!
+//! A run of an Eval has the same six, computed by [`for_run`] from the
+//! run's own facets after the header's defaults were copied onto it
+//! ([`crate::run::materialise`]). Conditions are per run, so "measured
+//! under the same conditions" is decided on run fingerprints; the header's
+//! fingerprints are the fingerprints of its defaults. Records with equal
 //! fingerprints on a facet agree on every core key of that facet. That is
 //! all a fingerprint claims. The hub never combines them into a single
 //! "same evaluation" verdict; the reader chooses which axes must match for
@@ -268,6 +274,19 @@ pub fn fingerprints(kind: RecordKind, value: &Value) -> Result<Fingerprints, Can
         out.insert(facet, digest);
     }
     Ok(Fingerprints(out))
+}
+
+/// The fingerprints of one run of an Eval: the same per-facet rule as
+/// [`fingerprints`], over the run's own six facets (an Eval's facets; a run
+/// has no `grading`).
+///
+/// Pass the run as stored, after [`crate::run::materialise`], so that a
+/// facet the run inherited from the header is fingerprinted as the run's
+/// own. A facet still absent after materialisation (neither the run nor the
+/// header had it) hashes as `{}`, as on a record. Fails only as
+/// [`fingerprints`] does.
+pub fn for_run(run: &Value) -> Result<Fingerprints, CanonicalError> {
+    fingerprints(RecordKind::Eval, run)
 }
 
 #[cfg(test)]

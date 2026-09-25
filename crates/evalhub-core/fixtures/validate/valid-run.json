@@ -1,0 +1,41 @@
+{
+  "run_id": "r1",
+  "body": {
+    "run_id": "r1",
+    "status": "ok",
+    "started_at": "2026-09-20T10:00:00Z",
+    "ended_at": "2026-09-20T10:02:11Z",
+    "model": {
+      "id": "qwen3.6-32b"
+    },
+    "generation": {
+      "temperature": 0.0
+    },
+    "calls": "calls/r1.jsonl",
+    "artifacts": [
+      "artifacts/r1/diff.patch"
+    ],
+    "attachments": [
+      {
+        "path": "calls/r1.jsonl",
+        "sha256": "a8b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6",
+        "size": 90210,
+        "media_type": "application/x-ndjson"
+      },
+      {
+        "path": "artifacts/r1/diff.patch",
+        "sha256": "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0",
+        "size": 3311,
+        "media_type": "text/x-diff"
+      }
+    ],
+    "metrics": {
+      "core/duration_ms": 131000.0,
+      "core/tokens_out": 1834.0
+    },
+    "ext": {},
+    "meta": {
+      "worker": "gpu-3"
+    }
+  }
+}
