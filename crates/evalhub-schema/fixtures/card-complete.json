@@ -1,5 +1,5 @@
 {
-  "schema": "evalhub.card/1.0",
+  "schema": "evalhub.card/1.1",
   "title": "qwen3.6-32b on single2 K4",
   "producer": {"name": "my-harness", "version": "0.4.1"},
   "model": {"id": "qwen3.6-32b", "provider": "local", "quantization": {"method": "awq", "dtype": "int4"}},
@@ -18,7 +18,7 @@
     "samples_ref": "samples.jsonl"
   }],
   "counts": {"attempted": 33, "completed": 30, "failed": 2, "skipped": 1, "errored": 0},
-  "relations": [{"type": "core/uses_eval", "to": "alice/single2-k4@3", "attrs": {"runs": ["r1"]}}],
+  "relations": [{"type": "core/uses_eval", "to": "alice/single2-k4@3"}],
   "attachments": [{"path": "samples.jsonl", "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "size": 12345, "media_type": "application/x-ndjson"}],
   "redaction": {"applied": true, "method": "regex+llm", "fields": ["samples.jsonl:response"]},
   "provenance": {"source_type": "evaluation_run", "evaluator_relationship": "first_party"},

@@ -101,16 +101,79 @@ fn fingerprint_exclusions_are_in_the_schema() {
     );
 }
 
+/// The identifiers a schema document's `schema` key accepts: its `const`,
+/// or every member of its `enum`, sorted.
+fn accepted_ids(schema: &schemars::Schema) -> Vec<String> {
+    let prop = &schema.as_value()["properties"]["schema"];
+    if let Some(c) = prop.get("const") {
+        return vec![c.as_str().unwrap().to_string()];
+    }
+    let mut ids: Vec<String> = prop["enum"]
+        .as_array()
+        .unwrap_or_else(|| panic!("`schema` has neither const nor enum: {prop}"))
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect();
+    ids.sort();
+    ids
+}
+
 #[test]
 fn schema_identifier_constants_match_the_schema_const() {
-    let card = evalhub_schema::schema_for_card();
+    use evalhub_schema::RecordKind;
+
+    assert_eq!(RecordKind::Card.schema_id(), evalhub_schema::CARD_SCHEMA);
+    assert_eq!(RecordKind::Eval.schema_id(), evalhub_schema::EVAL_SCHEMA);
+
+    for kind in [RecordKind::Card, RecordKind::Eval] {
+        let ids = kind.schema_ids();
+        // The current identifier is listed, and listed first.
+        assert_eq!(ids[0], kind.schema_id(), "{kind:?}");
+        // `schema()` is the document for the current identifier.
+        assert!(
+            accepted_ids(&kind.schema()).contains(&kind.schema_id().to_string()),
+            "{kind:?}: schema() does not accept {}",
+            kind.schema_id()
+        );
+        // Every accepted identifier has a document, and that document's
+        // `schema` constraint accepts only identifiers `schema_ids()` lists.
+        for id in ids {
+            let doc = kind
+                .schema_for(id)
+                .unwrap_or_else(|| panic!("{kind:?}: no document for {id}"));
+            let accepted = accepted_ids(&doc);
+            assert!(accepted.contains(&id.to_string()), "{id}: {accepted:?}");
+            for other in &accepted {
+                assert!(
+                    ids.contains(&other.as_str()),
+                    "{id}'s document accepts {other}, which schema_ids() does not list"
+                );
+            }
+        }
+        assert!(kind.schema_for("evalhub.nope/1.0").is_none());
+    }
+
+    // The Card's two minors share one document; the Eval's majors do not.
     assert_eq!(
-        card.as_value()["properties"]["schema"]["const"],
-        evalhub_schema::CARD_SCHEMA
+        accepted_ids(&evalhub_schema::schema_for_card()),
+        ["evalhub.card/1.0", "evalhub.card/1.1"]
     );
-    let eval = evalhub_schema::schema_for_eval();
     assert_eq!(
-        eval.as_value()["properties"]["schema"]["const"],
-        evalhub_schema::EVAL_SCHEMA
+        RecordKind::Card.schema_for("evalhub.card/1.0"),
+        RecordKind::Card.schema_for("evalhub.card/1.1")
+    );
+    assert_eq!(
+        accepted_ids(&evalhub_schema::schema_for_eval()),
+        [evalhub_schema::EVAL_SCHEMA]
+    );
+    assert_eq!(
+        accepted_ids(&evalhub_schema::schema_for_eval_v1()),
+        ["evalhub.eval/1.0"]
+    );
+    assert!(RecordKind::Eval.schema_for("evalhub.card/1.1").is_none());
+    assert!(
+        RecordKind::Card
+            .schema_for(evalhub_schema::EVAL_SCHEMA)
+            .is_none()
     );
 }

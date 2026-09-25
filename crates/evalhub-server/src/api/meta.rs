@@ -70,7 +70,8 @@ pub async fn openapi(State(state): State<AppState>) -> Json<Arc<OpenApi>> {
 }
 
 /// `GET /schemas/{name}` — one of the generated JSON Schemas
-/// (`card`, `eval`, `error`, `query`), with `$id` set to the URL it was
+/// (`evalhub_schema::SCHEMA_NAMES`: `card`, `eval` (the 1.0 Eval, until
+/// 0.3.0), `eval-2`, `run`, `error`, `query`), with `$id` set to the URL it was
 /// fetched from so that `$ref`s resolve to the same bytes.
 ///
 /// The URL is rebuilt from the `Host` header and, when a proxy sets it,

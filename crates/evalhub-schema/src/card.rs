@@ -9,13 +9,15 @@
 //!
 //! ```text
 //! Card
-//! ├── schema        "evalhub.card/1.0"
+//! ├── schema        "evalhub.card/1.1" (or "evalhub.card/1.0")
 //! ├── title         free text
 //! ├── producer      { name, version }            who wrote this record
 //! ├── model / task / harness / generation / trial / grading / env
 //! │                 seven facets (see `facet`)   what was measured, under what conditions
 //! ├── results[]     { metric, value, n, aggregation, uncertainty, by, samples_ref }
 //! ├── counts        { attempted, completed, failed, skipped, errored }
+//! ├── run_results[] { eval, run_id, metric, value?, label?, by?, from? }
+//! │                 per-run verdicts on the runs of a cited Eval (1.1)
 //! ├── relations[]   { type, to, attrs }          edges to other records
 //! ├── attachments[] { path, sha256, size, media_type }
 //! ├── redaction     { applied, method, fields }
@@ -27,7 +29,7 @@
 //!
 //! ```json
 //! {
-//!   "schema": "evalhub.card/1.0",
+//!   "schema": "evalhub.card/1.1",
 //!   "title": "qwen3.6-32b on single2 K4",
 //!   "producer": {"name": "my-harness", "version": "0.4.1"},
 //!   "model": {"id": "qwen3.6-32b", "provider": "local", "quantization": {"method": "awq", "dtype": "int4"}},
@@ -46,7 +48,7 @@
 //!     "samples_ref": "samples.jsonl"
 //!   }],
 //!   "counts": {"attempted": 33, "completed": 30, "failed": 2, "skipped": 1, "errored": 0},
-//!   "relations": [{"type": "core/uses_eval", "to": "alice/single2-k4@3", "attrs": {"runs": ["r1"]}}],
+//!   "relations": [{"type": "core/uses_eval", "to": "alice/single2-k4@3"}],
 //!   "attachments": [{"path": "samples.jsonl", "sha256": "…", "size": 12345, "media_type": "application/x-ndjson"}],
 //!   "redaction": {"applied": true, "method": "regex+llm", "fields": ["samples.jsonl:response"]},
 //!   "provenance": {"source_type": "evaluation_run", "evaluator_relationship": "first_party"},
@@ -76,6 +78,59 @@
 //! arithmetic rule the hub enforces, because a score without the denominator
 //! it was computed over is not comparable to anything.
 //!
+//! # Run results
+//!
+//! ```text
+//! relations[core/uses_eval] { to: "{ns}/{name}@{seq}", attrs: { runs?: [run_id] } }
+//! run_results[]             { eval: "{ns}/{name}", run_id, metric, value?, label?, by?, from? }
+//! ```
+//!
+//! `results[]` is the aggregate; `run_results[]` is the verdict per run
+//! that the aggregate was computed from. A run of an Eval records what
+//! happened and what was measured directly (`crate::run`); it never says
+//! whether it passed. That judgement depends on a grader, so it is the
+//! Card's claim and lives here: one element per `(run, metric)` the Card
+//! judged, with a number (`value`), a label (`label`, such as `pass` or
+//! `fail`), or both. At least one of the two is present
+//! (`run_result_value_or_label`). `by` partitions the verdict the way
+//! `results[].by` does, and `from` optionally names the run's `metrics`
+//! keys the verdict was derived from. The hub does not recompute anything
+//! and does not check that `results[]` agrees with `run_results[]`; how the
+//! verdicts were produced is the grading facet's to describe.
+//!
+//! Re-grading appends a Card version; the earlier verdicts stay with the
+//! earlier version. Grading the same runs with a different grader is a
+//! different Card.
+//!
+//! `run_results` was added in `evalhub.card/1.1`. It is an optional key, so
+//! the bump is minor: one schema document serves both identifiers, a Card
+//! declaring `evalhub.card/1.0` may carry `run_results` too, and Cards
+//! stored under 1.0 are not rewritten.
+//!
+//! ## The used set
+//!
+//! Which runs a Card used is decided per cited Eval record, and that set of
+//! `run_id`s is the Card's *used set* for the record. For each Eval record,
+//! it is the union of `attrs.runs` over the Card's `core/uses_eval`
+//! relations that resolve to that record; or, when none of those relations
+//! carries `attrs.runs`, every run of the record that is neither archived
+//! nor deleted at the moment the Card is posted. The hub fixes the used set
+//! when the Card is posted and remembers each run's content hash with it,
+//! which is how a later change to a run is detected.
+//!
+//! Against the used set:
+//!
+//! - `run_results[].eval` names the record (`{ns}/{name}`, no `@seq`) of
+//!   one of the Card's `core/uses_eval` relations
+//!   (`run_results_eval_unknown`).
+//! - every `run_id` in a used set has a row in that Eval, archived and
+//!   deleted rows included (`run_unknown`). A run is always in the hub, so
+//!   a missing row is a mistake, not an unresolved reference, and an Eval
+//!   the writer may not see answers the same way as a run that does not
+//!   exist.
+//! - every `run_results[].run_id` is in the used set of its `eval`
+//!   (`run_not_in_used_set`).
+//!
 //! # Provenance and redaction
 //!
 //! `provenance` says where the numbers came from (`evaluation_run`,
@@ -102,8 +157,9 @@ use crate::facet::{Env, Generation, Grading, Harness, Model, Task, Trial};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Card {
-    /// Schema identifier; must be `evalhub.card/1.0`.
-    #[schemars(extend("const" = "evalhub.card/1.0"))]
+    /// Schema identifier: `evalhub.card/1.1`, or `evalhub.card/1.0`, which is
+    /// still accepted. Both are described by this one schema.
+    #[schemars(extend("enum" = ["evalhub.card/1.0", "evalhub.card/1.1"]))]
     pub schema: String,
     /// Human-readable title.
     pub title: String,
@@ -136,6 +192,11 @@ pub struct Card {
     /// Item counts the scores were computed over. Required when `results` is non-empty.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub counts: Option<Counts>,
+    /// Per-run verdicts on the runs of the Evals this Card uses
+    /// (`core/uses_eval`). Each `run_id` must be in the Card's used set for
+    /// its `eval`. Added in `evalhub.card/1.1`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub run_results: Vec<RunResult>,
     /// Edges to other records.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub relations: Vec<Relation>,
@@ -175,6 +236,34 @@ pub struct ResultEntry {
     /// `attachments[].path` of the per-sample rows this score summarises.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub samples_ref: Option<String>,
+}
+
+/// The Card's verdict on one run for one metric.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RunResult {
+    /// The Eval record the run belongs to, `{ns}/{name}` (no `@seq`: runs
+    /// belong to the record, not to a version). Must be the record of one of
+    /// this Card's `core/uses_eval` relations.
+    pub eval: String,
+    /// The run judged. Must be in this Card's used set for `eval`.
+    pub run_id: String,
+    /// Metric as a registry id, `{ns}/{name}` (for example `core/pass`).
+    pub metric: String,
+    /// The verdict as a number. At least one of `value` and `label` is present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<f64>,
+    /// The verdict as a label (for example `pass`, `fail`). At least one of
+    /// `value` and `label` is present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// The partition this verdict applies to (for example which grader).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<serde_json::Map<String, serde_json::Value>>,
+    /// Keys of the run's `metrics` the verdict was derived from. Informational;
+    /// the hub does not recompute.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub from: Vec<String>,
 }
 
 /// How a score was derived from its samples.

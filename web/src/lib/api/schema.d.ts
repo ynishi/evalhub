@@ -856,7 +856,7 @@ export interface components {
             ns: string;
         };
         /** @description The closed set of error codes. */
-        ErrorCode: "schema" | "number_too_large" | "counts_missing" | "counts_inconsistent" | "attachment_ref_unknown" | "attachment_path_invalid" | "metric_id_invalid" | "type_mismatch" | "not_indexed" | "unknown_path" | "attachment_missing" | "label_in_use" | "namespace_in_use" | "registry_entry_exists";
+        ErrorCode: "schema" | "number_too_large" | "counts_missing" | "counts_inconsistent" | "attachment_ref_unknown" | "attachment_path_invalid" | "metric_id_invalid" | "type_mismatch" | "not_indexed" | "unknown_path" | "attachment_missing" | "label_in_use" | "namespace_in_use" | "registry_entry_exists" | "runs_moved" | "run_status_detail" | "run_id_invalid" | "run_id_mismatch" | "run_result_value_or_label" | "run_results_eval_unknown" | "run_unknown" | "run_not_in_used_set" | "too_many_run_results" | "run_deleted" | "batch_duplicate_run_id" | "batch_too_large" | "body_too_large";
         /** @description One rejection. */
         ErrorEntry: {
             /** @description The code. */
