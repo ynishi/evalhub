@@ -1,0 +1,29 @@
+{
+  "where": {
+    "and": [
+      {
+        "path": "status",
+        "op": "eq",
+        "value": "ok"
+      },
+      {
+        "path": "metrics[a/b]",
+        "op": "lt",
+        "value": 4000
+      },
+      {
+        "path": "results[c/d][a/b].value",
+        "op": "gte",
+        "value": 1
+      }
+    ]
+  },
+  "sort": [
+    {
+      "path": "metrics[a/b]",
+      "dir": "desc"
+    }
+  ],
+  "limit": 50,
+  "cursor": null
+}

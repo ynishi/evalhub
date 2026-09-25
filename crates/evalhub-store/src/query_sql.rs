@@ -307,6 +307,12 @@ fn plan_sorts(sort: &[ir::Sort]) -> Result<Vec<SortPlan>, StoreError> {
                     "{other:?} cannot be sorted on"
                 )));
             }
+            // Only a run projection query (`ir::RunQuery`) sorts on these.
+            ir::SortKey::Run(column) => {
+                return Err(StoreError::QueryUnsupported(format!(
+                    "{column:?} is a run column, not a record column"
+                )));
+            }
         };
         plans.push(plan);
     }
@@ -570,6 +576,10 @@ fn push_cmp(
             let expr = ext_expression(path, *ty)?;
             push_operator(q, &expr, cmp.op, *ty, &cmp.value)
         }
+        // Only a run projection query (`ir::RunQuery`) carries these.
+        ir::Column::Run(column) => Err(StoreError::QueryUnsupported(format!(
+            "{column:?} is a run column, not a record column"
+        ))),
     }
 }
 
@@ -718,6 +728,12 @@ fn push_exists(q: &mut QueryBuilder<Postgres>, column: &ir::Column) -> Result<()
         ir::Column::Array(col) => {
             return Err(StoreError::QueryUnsupported(format!(
                 "{col:?} exists outside an `any` condition"
+            )));
+        }
+        // Only a run projection query (`ir::RunQuery`) carries these.
+        ir::Column::Run(column) => {
+            return Err(StoreError::QueryUnsupported(format!(
+                "{column:?} is a run column, not a record column"
             )));
         }
     }

@@ -25,9 +25,10 @@
 //! and names the registry. That is the same answer an unregistered `ext`
 //! path gets, and for the same reason.
 //!
-//! `runs` is deliberately absent: an Eval's runs live in the body and have
-//! no side table, so there is nothing for `any` to range over. A query that
-//! needs them wants `attachments` or a registered `ext` path.
+//! `runs` is deliberately absent: an Eval's runs are rows of their own, not
+//! a key of the header's body, so a record query cannot reach them. A
+//! question about runs is asked of the run projection, which has its own
+//! table (below).
 //!
 //! The check walks the parsed tree and, for each leaf, looks the path up,
 //! confirms the operator is legal for the type, confirms the literal is of
@@ -39,16 +40,75 @@
 //! The table is rebuilt when an `ext_schema` transitions to `applied`; the
 //! server holds it behind an `ArcSwap`-style handle so a query in flight
 //! sees a consistent table.
+//!
+//! # The run projection's table
+//!
+//! `GET /evals/{ns}/{name}/runs` reads one row per run of one Eval, joined
+//! with the `run_results` of the Cards the request names. Its table is
+//! [`PathTable::for_runs`], built by hand rather than from a record
+//! schema, because a row of the projection is not a record: it is a run's
+//! columns, its side tables, and a join.
+//!
+//! | Path form                              | Type                 | Resolves to                     |
+//! | -------------------------------------- | -------------------- | ------------------------------- |
+//! | `run_id`, `status`, `error.kind`       | string               | a column of `runs`              |
+//! | `started_at`, `ended_at`               | string (RFC 3339)    | a column of `runs`              |
+//! | `{facet}.{key}` (`model.id`, …)        | from the schema leaf | the run's body                  |
+//! | `fingerprint.{facet}`                  | string               | `run_fingerprints`              |
+//! | `metrics[{ns}/{name}]`                 | number               | `run_metrics`                   |
+//! | `results[{card}][{metric}].value`      | number               | the Card's `run_results`        |
+//! | `results[{card}][{metric}].label`      | string               | the Card's `run_results`        |
+//! | `ext.{ns}.{key}`                       | as for records       | the run's body                  |
+//!
+//! - The facet keys are the Eval header's: the leaves of the six Eval
+//!   facets in `RecordKind::Eval.schema()` (a run carries the same facet
+//!   types, `evalhub_schema::run`). There is no `grading`.
+//! - `metrics[…]` takes any well-formed metric id (`{ns}/{name}`, the
+//!   registry id rule); the registry is not consulted, because a run's
+//!   metrics are accepted whether or not the registry knows them, and so
+//!   they must be searchable the same way. A malformed id is
+//!   `unknown_path`.
+//! - `results[{card}]…` exists only for the Cards named in the request
+//!   ([`CardRef`], `{ns}/{name}`). A Card the request did not name is
+//!   `unknown_path`, with a hint to name it: joining a Card the caller did
+//!   not ask for would change the projection behind the caller's back.
+//!   Which Cards a caller may name at all is the server's decision, made
+//!   before the table is built.
+//! - Parameters use the bracket form the record table's
+//!   `results[{metric}].value` sort key uses. The dotted forms
+//!   (`metrics.core/tokens_out`, `results.alice/g.core/pass.value`) are
+//!   refused with a hint naming the bracket form: a slug may contain `.`,
+//!   so a dotted path cannot say where a parameter ends. The bracket form
+//!   needs no escaping because ids and Card references are made of
+//!   `[a-z0-9._-]` and one `/`, never `[` or `]`.
+//! - `ext.*` comes through the same [`PathTable::with_ext`] as for records;
+//!   in the projection its paths are below the run's own `ext`.
+//! - There are no array paths and so no `any`: a run's `attachments[]` and
+//!   `artifacts[]` are not searchable here, and a Card's judgements are
+//!   addressed by Card and metric rather than ranged over.
+//!
+//! **Index awareness is different here.** Every path of the projection is
+//! served in full (every operator its type allows, and sortable), facet
+//! keys included, although the run's facets have no generated column. The
+//! record table refuses ranges on such keys because a record query spans
+//! every record of the hub, and a range the index cannot answer grows with
+//! the hub. The projection is always scoped to one Eval (`runs` is keyed
+//! by `(record, run_id)`), so the worst case is a scan of one Eval's runs,
+//! which the page limit and the `runs:batch` limits bound. An `ext` key
+//! with no registered schema still answers only `eq` and `exists`, not for
+//! the index but for the type: nothing declares what it holds, so a range
+//! on it has no meaning.
 
 use std::collections::BTreeMap;
 
+use evalhub_core::validate::is_valid_id;
 use evalhub_schema::RecordKind;
 use evalhub_schema::error::{ErrorCode, ErrorEntry};
 use evalhub_schema::query::{self as envelope, QueryRequest};
 use serde_json::Value;
 
 use crate::grammar::{self, Filter, MatchTerm, ScalarOp};
-use crate::ir;
+use crate::ir::{self, CardRef};
 
 /// The facets, in the order the record types declare them. `grading`
 /// belongs to a Card only, which [`RecordKind`] decides.
@@ -146,10 +206,26 @@ pub struct ExtSchema {
 }
 
 /// The set of legal query paths with their types and index status,
-/// projected from the record schema and the applied `ext_schemas`.
+/// projected from the record schema and the applied `ext_schemas`, or
+/// built for the run projection by [`PathTable::for_runs`].
 #[derive(Debug, Default, Clone)]
 pub struct PathTable {
     paths: BTreeMap<String, PathInfo>,
+    target: Target,
+}
+
+/// What a table's paths address.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+enum Target {
+    /// Versions of a record kind; [`compile`] reads it.
+    #[default]
+    Record,
+    /// The runs of one Eval, joined with these Cards; [`compile_runs`]
+    /// reads it.
+    Runs {
+        /// The Cards named in the request, in request order, deduplicated.
+        cards: Vec<CardRef>,
+    },
 }
 
 impl PathTable {
@@ -195,9 +271,28 @@ impl PathTable {
                         },
                     );
                 }
-                // `runs` has no side table; see the module doc.
-                "runs" => {}
-                _ => walk(&mut paths, &defs, prop, std::slice::from_ref(name)),
+                _ => {
+                    let mut leaves = Vec::new();
+                    collect_leaves(&mut leaves, &defs, prop, std::slice::from_ref(name));
+                    for (segments, ty) in leaves {
+                        let column = GENERATED_COLUMNS
+                            .iter()
+                            .find(|(json_path, _)| json_path == &segments.as_slice())
+                            .map(|(_, name)| ir::Column::Generated((*name).to_string()));
+                        let (column, indexed) = match column {
+                            Some(column) => (column, Indexed::Full),
+                            None => (ir::Column::Body(segments.clone()), Indexed::EqExistsOnly),
+                        };
+                        paths.insert(
+                            segments.join("."),
+                            PathInfo::Scalar {
+                                column,
+                                ty,
+                                indexed,
+                            },
+                        );
+                    }
+                }
             }
         }
 
@@ -213,7 +308,97 @@ impl PathTable {
             );
         }
 
-        Self { paths }
+        Self {
+            paths,
+            target: Target::Record,
+        }
+    }
+
+    /// Build the table of the run projection (`GET /evals/{ns}/{name}/runs`)
+    /// for a request that names `cards`.
+    ///
+    /// The fixed paths are the run's columns, the leaves of the six Eval
+    /// facets (read from `RecordKind::Eval.schema()`, the header's schema,
+    /// whose facet types a run shares) and `fingerprint.{facet}`. The
+    /// parametric paths, `metrics[{ns}/{name}]` and
+    /// `results[{card}][{metric}].value` / `.label`, are resolved by
+    /// [`PathTable::lookup`] rather than listed, since metric ids are an
+    /// open set; `results` resolves only for a Card in `cards`. Fold the
+    /// registry in with [`PathTable::with_ext`], as for records. See the
+    /// module doc for the table and why every path is served in full.
+    ///
+    /// A Card named twice is kept once, at its first position. The table
+    /// is cheap to build (a few dozen entries) and is meant to be built per
+    /// request, since `cards` is per request.
+    pub fn for_runs(cards: &[CardRef]) -> Self {
+        use ir::{RunColumn as R, ValueType as V};
+
+        let mut paths = BTreeMap::new();
+        let mut scalar = |path: &str, column: R, ty: V| {
+            paths.insert(
+                path.to_string(),
+                PathInfo::Scalar {
+                    column: ir::Column::Run(column),
+                    ty,
+                    indexed: Indexed::Full,
+                },
+            );
+        };
+        scalar("run_id", R::RunId, V::String);
+        scalar("status", R::Status, V::String);
+        scalar("error.kind", R::ErrorKind, V::String);
+        scalar("started_at", R::StartedAt, V::String);
+        scalar("ended_at", R::EndedAt, V::String);
+
+        let facets = facets(RecordKind::Eval);
+        let schema = RecordKind::Eval.schema().to_value();
+        let defs = schema.get("$defs").cloned().unwrap_or(Value::Null);
+        let root_props = schema
+            .get("properties")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        for facet in facets {
+            if let Some(prop) = root_props.get(*facet) {
+                let mut leaves = Vec::new();
+                collect_leaves(&mut leaves, &defs, prop, &[(*facet).to_string()]);
+                for (segments, ty) in leaves {
+                    let path = segments.join(".");
+                    scalar(&path, R::Facet(segments), ty);
+                }
+            }
+            scalar(
+                &format!("fingerprint.{facet}"),
+                R::Fingerprint((*facet).to_string()),
+                V::String,
+            );
+        }
+
+        let mut named: Vec<CardRef> = Vec::with_capacity(cards.len());
+        for card in cards {
+            if !named.contains(card) {
+                named.push(card.clone());
+            }
+        }
+        Self {
+            paths,
+            target: Target::Runs { cards: named },
+        }
+    }
+
+    /// The Cards a run projection table was built for, in request order;
+    /// empty for a record table.
+    pub fn cards(&self) -> &[CardRef] {
+        match &self.target {
+            Target::Record => &[],
+            Target::Runs { cards } => cards,
+        }
+    }
+
+    /// Whether this is the run projection's table ([`PathTable::for_runs`])
+    /// rather than a record kind's.
+    pub fn is_runs(&self) -> bool {
+        matches!(self.target, Target::Runs { .. })
     }
 
     /// The same table with the registry's extension schemas folded in.
@@ -240,7 +425,10 @@ impl PathTable {
                 );
             }
         }
-        Self { paths }
+        Self {
+            paths,
+            target: self.target.clone(),
+        }
     }
 
     /// Look a path up.
@@ -248,28 +436,49 @@ impl PathTable {
     /// An `ext.` path the registry does not know still resolves — to the
     /// GIN index, with `eq` and `exists` only — because a producer may
     /// search its own extension before registering a schema for it.
+    ///
+    /// In a run projection table this also resolves the parametric paths
+    /// `metrics[{ns}/{name}]` and `results[{card}][{metric}].value` /
+    /// `.label` (see [`PathTable::for_runs`]).
     pub fn lookup(&self, path: &str) -> Option<PathInfo> {
+        self.resolve(path).ok()
+    }
+
+    /// [`PathTable::lookup`], with the reason a path does not resolve: the
+    /// hint of the `unknown_path` entry. The reason is specific where a
+    /// near miss is likely (a dotted parameter, a Card the request did not
+    /// name, a malformed metric id).
+    fn resolve(&self, path: &str) -> Result<PathInfo, String> {
         if let Some(info) = self.paths.get(path) {
-            return Some(info.clone());
+            return Ok(info.clone());
+        }
+        if let Target::Runs { cards } = &self.target
+            && let Some(result) = resolve_run_param(path, cards)
+        {
+            return result;
         }
         if let Some(rest) = path.strip_prefix("ext.") {
             // `ext.{ns}/{name}.{key…}`: the namespace carries a slash but
             // never a dot, so the first segment is the namespace.
-            let (ns, key) = rest.split_once('.')?;
-            if ns.is_empty() || key.is_empty() {
-                return None;
+            if let Some((ns, key)) = rest.split_once('.')
+                && !ns.is_empty()
+                && !key.is_empty()
+            {
+                let mut json_path = vec!["ext".to_string(), ns.to_string()];
+                json_path.extend(key.split('.').map(str::to_string));
+                return Ok(PathInfo::Scalar {
+                    column: ir::Column::Body(json_path),
+                    // A placeholder: nothing has declared this key's type, so
+                    // `Indexed::EqExistsUntyped` tells the check to ignore it.
+                    ty: ir::ValueType::String,
+                    indexed: Indexed::EqExistsUntyped,
+                });
             }
-            let mut json_path = vec!["ext".to_string(), ns.to_string()];
-            json_path.extend(key.split('.').map(str::to_string));
-            return Some(PathInfo::Scalar {
-                column: ir::Column::Body(json_path),
-                // A placeholder: nothing has declared this key's type, so
-                // `Indexed::EqExistsUntyped` tells the check to ignore it.
-                ty: ir::ValueType::String,
-                indexed: Indexed::EqExistsUntyped,
-            });
         }
-        None
+        Err(match self.target {
+            Target::Record => format!("`{path}` is not a queryable path of this record"),
+            Target::Runs { .. } => format!("`{path}` is not a queryable path of a run"),
+        })
     }
 
     /// Every path the table knows, for diagnostics and for the UI's
@@ -277,6 +486,97 @@ impl PathTable {
     pub fn paths(&self) -> impl Iterator<Item = (&str, &PathInfo)> {
         self.paths.iter().map(|(k, v)| (k.as_str(), v))
     }
+}
+
+/// Resolve the parametric paths of the run projection: `None` when `path`
+/// is not one of their forms (and the ordinary lookup should go on),
+/// otherwise the column or the reason it is not one.
+fn resolve_run_param(path: &str, cards: &[CardRef]) -> Option<Result<PathInfo, String>> {
+    use ir::{ResultField, RunColumn as R, ValueType as V};
+
+    let full = |column: R, ty: V| PathInfo::Scalar {
+        column: ir::Column::Run(column),
+        ty,
+        indexed: Indexed::Full,
+    };
+
+    if let Some(rest) = path.strip_prefix("metrics[") {
+        // `metrics[{ns}/{name}]`, and nothing after the bracket: a metric
+        // is a number, not an object.
+        let Some(metric) = rest.strip_suffix(']') else {
+            return Some(Err(format!(
+                "a run's metric is `metrics[{{ns}}/{{name}}]`, a number with no fields; \
+                 `{path}` does not end at the closing bracket"
+            )));
+        };
+        if !is_valid_id(metric) {
+            return Some(Err(format!(
+                "`{metric}` is not a metric id of the form `{{ns}}/{{name}}`"
+            )));
+        }
+        return Some(Ok(full(R::Metric(metric.to_string()), V::Number)));
+    }
+    if path == "metrics" || path.starts_with("metrics.") {
+        return Some(Err(format!(
+            "a run's metrics are addressed with brackets, `metrics[{{ns}}/{{name}}]`, \
+             because a metric id may contain `.`; `{path}` is not a path"
+        )));
+    }
+
+    if let Some(rest) = path.strip_prefix("results[") {
+        const FORM: &str = "`results[{card}][{metric}].value` or `.label`";
+        let Some((card, rest)) = rest.split_once("][") else {
+            return Some(Err(format!(
+                "a judgement is addressed as {FORM}; `{path}` is not of that form"
+            )));
+        };
+        let Some((metric, field)) = rest.split_once("].") else {
+            return Some(Err(format!(
+                "a judgement is addressed as {FORM}; `{path}` is not of that form"
+            )));
+        };
+        let Some(card) = CardRef::parse(card) else {
+            return Some(Err(format!(
+                "`{card}` is not a Card reference of the form `{{ns}}/{{name}}`"
+            )));
+        };
+        if !cards.contains(&card) {
+            return Some(Err(format!(
+                "the Card `{card}` is not named in this request; name it in `cards` to join \
+                 its judgements"
+            )));
+        }
+        if !is_valid_id(metric) {
+            return Some(Err(format!(
+                "`{metric}` is not a metric id of the form `{{ns}}/{{name}}`"
+            )));
+        }
+        let (field, ty) = match field {
+            "value" => (ResultField::Value, V::Number),
+            "label" => (ResultField::Label, V::String),
+            _ => {
+                return Some(Err(format!(
+                    "a judgement has `value` and `label`; `{field}` is neither"
+                )));
+            }
+        };
+        return Some(Ok(full(
+            R::Result {
+                card,
+                metric: metric.to_string(),
+                field,
+            },
+            ty,
+        )));
+    }
+    if path == "results" || path.starts_with("results.") {
+        return Some(Err(format!(
+            "a Card's judgements are addressed with brackets, \
+             `results[{{card}}][{{metric}}].value` or `.label`, because a Card name and a \
+             metric id may contain `.`; `{path}` is not a path"
+        )));
+    }
+    None
 }
 
 /// The facets a record kind has. An Eval has no `grading`.
@@ -287,8 +587,14 @@ fn facets(kind: RecordKind) -> &'static [&'static str] {
     }
 }
 
-/// Walk one property of the schema, adding every scalar leaf below it.
-fn walk(paths: &mut BTreeMap<String, PathInfo>, defs: &Value, prop: &Value, segments: &[String]) {
+/// Walk one property of the schema, collecting every scalar leaf below it
+/// as its path segments and type.
+fn collect_leaves(
+    out: &mut Vec<(Vec<String>, ir::ValueType)>,
+    defs: &Value,
+    prop: &Value,
+    segments: &[String],
+) {
     let resolved = resolve(defs, prop);
     let Some(resolved) = resolved else { return };
 
@@ -301,7 +607,7 @@ fn walk(paths: &mut BTreeMap<String, PathInfo>, defs: &Value, prop: &Value, segm
             }
             let mut next = segments.to_vec();
             next.push(name.clone());
-            walk(paths, defs, child, &next);
+            collect_leaves(out, defs, child, &next);
         }
         return;
     }
@@ -312,23 +618,7 @@ fn walk(paths: &mut BTreeMap<String, PathInfo>, defs: &Value, prop: &Value, segm
         // the same reasoning as `runs`.
         return;
     };
-    let path = segments.join(".");
-    let column = GENERATED_COLUMNS
-        .iter()
-        .find(|(json_path, _)| json_path == &segments)
-        .map(|(_, name)| ir::Column::Generated((*name).to_string()));
-    let (column, indexed) = match column {
-        Some(column) => (column, Indexed::Full),
-        None => (ir::Column::Body(segments.to_vec()), Indexed::EqExistsOnly),
-    };
-    paths.insert(
-        path,
-        PathInfo::Scalar {
-            column,
-            ty,
-            indexed,
-        },
-    );
+    out.push((segments.to_vec(), ty));
 }
 
 /// Follow a `$ref` (and the `anyOf [T, null]` an `Option<T>` generates)
@@ -690,34 +980,26 @@ fn lookup_or_report(
     pointer: &str,
     errors: &mut Vec<ErrorEntry>,
 ) -> Option<PathInfo> {
-    match table.lookup(path) {
-        Some(info) => Some(info),
-        None => {
+    match table.resolve(path) {
+        Ok(info) => Some(info),
+        Err(hint) => {
             errors.push(entry(
                 &format!("{pointer}/path"),
                 ErrorCode::UnknownPath,
-                format!("`{path}` is not a queryable path of this record"),
+                hint,
             ));
             None
         }
     }
 }
 
-/// Parse, check and assemble a whole request into the IR the store runs.
-///
-/// This is the one function the server calls. `limit` is the clamped page
-/// size, and `cursor` the decoded keyset the server verified: neither is
-/// this crate's business to decide.
-pub fn compile(
+/// Parse and check the `where` of a request, collecting its problems.
+fn compile_filter(
     request: &QueryRequest,
-    kind: RecordKind,
     table: &PathTable,
-    limit: u32,
-    cursor: Option<ir::Cursor>,
-) -> Result<ir::Query, Vec<ErrorEntry>> {
-    let mut errors = Vec::new();
-
-    let filter = match &request.where_ {
+    errors: &mut Vec<ErrorEntry>,
+) -> Option<ir::Filter> {
+    match &request.where_ {
         None => None,
         Some(value) => match grammar::parse(value) {
             Ok(ast) => match check(&ast, table) {
@@ -732,7 +1014,34 @@ pub fn compile(
                 None
             }
         },
-    };
+    }
+}
+
+fn to_ir_dir(dir: envelope::Dir) -> ir::Dir {
+    match dir {
+        envelope::Dir::Asc => ir::Dir::Asc,
+        envelope::Dir::Desc => ir::Dir::Desc,
+    }
+}
+
+/// Parse, check and assemble a whole request into the IR the store runs.
+///
+/// This is the one function the server calls for a record query. `table`
+/// is the record kind's ([`PathTable::from_schema`]), never the run
+/// projection's. `limit` is the clamped page size, and `cursor` the
+/// decoded keyset the server verified: neither is this crate's business to
+/// decide.
+pub fn compile(
+    request: &QueryRequest,
+    kind: RecordKind,
+    table: &PathTable,
+    limit: u32,
+    cursor: Option<ir::Cursor>,
+) -> Result<ir::Query, Vec<ErrorEntry>> {
+    debug_assert!(!table.is_runs(), "a record query needs a record table");
+    let mut errors = Vec::new();
+
+    let filter = compile_filter(request, table, &mut errors);
 
     let mut sort = Vec::new();
     for (i, key) in request.sort.iter().enumerate() {
@@ -740,10 +1049,7 @@ pub fn compile(
         if let Some(checked) = check_sort(&key.path, table, &pointer, &mut errors) {
             sort.push(ir::Sort {
                 key: checked,
-                dir: match key.dir {
-                    envelope::Dir::Asc => ir::Dir::Asc,
-                    envelope::Dir::Desc => ir::Dir::Desc,
-                },
+                dir: to_ir_dir(key.dir),
             });
         }
     }
@@ -852,6 +1158,124 @@ fn check_sort(
                 &format!("{pointer}/path"),
                 ErrorCode::UnknownPath,
                 format!("`{path}` is not a queryable path of this record"),
+            ));
+            None
+        }
+    }
+}
+
+/// Parse, check and assemble a request for the run projection
+/// (`GET /evals/{ns}/{name}/runs`) into the IR the store runs.
+///
+/// The counterpart of [`compile`] for the second target. `table` is
+/// [`PathTable::for_runs`] for the Cards the request names (with the
+/// registry folded in), and those Cards are carried into
+/// [`ir::RunQuery::cards`]. `limit` and `cursor` are, as for [`compile`],
+/// the server's: the clamped page size and the verified, decoded
+/// [`ir::RunCursor`].
+///
+/// The grammar is the record query's. What differs:
+///
+/// - paths resolve against the run table (module doc), so a record path
+///   such as `title` is `unknown_path`, and `any` has nothing to range
+///   over;
+/// - `sort` takes any path of the table except an unregistered `ext` key;
+///   there is no `created_at` (sort on `started_at` / `ended_at`), and
+///   `run_id` is the implicit final key;
+/// - `expand` and `version` are record concepts and are not read; the
+///   projection has nothing to expand and no versions.
+///
+/// Which Eval is read, whether archived and deleted runs are included,
+/// and which Cards the caller may name are server concerns, decided around
+/// this call.
+pub fn compile_runs(
+    request: &QueryRequest,
+    table: &PathTable,
+    limit: u32,
+    cursor: Option<ir::RunCursor>,
+) -> Result<ir::RunQuery, Vec<ErrorEntry>> {
+    debug_assert!(table.is_runs(), "a run query needs PathTable::for_runs");
+    let mut errors = Vec::new();
+
+    let filter = compile_filter(request, table, &mut errors);
+
+    let mut sort = Vec::new();
+    for (i, key) in request.sort.iter().enumerate() {
+        let pointer = format!("/sort/{i}");
+        if let Some(checked) = check_run_sort(&key.path, table, &pointer, &mut errors) {
+            sort.push(ir::Sort {
+                key: checked,
+                dir: to_ir_dir(key.dir),
+            });
+        }
+    }
+
+    if let Some(cursor) = &cursor
+        && cursor.keys.len() != sort.len()
+    {
+        errors.push(entry(
+            "/cursor",
+            ErrorCode::Schema,
+            "the cursor does not match this sort; start the page sequence again",
+        ));
+    }
+
+    if !errors.is_empty() {
+        return Err(errors);
+    }
+
+    Ok(ir::RunQuery {
+        cards: table.cards().to_vec(),
+        filter,
+        sort,
+        limit,
+        cursor,
+    })
+}
+
+/// Resolve one sort path of the run projection. Every run column sorts;
+/// a registered `ext` path sorts as a [`ir::Column::Ext`] of the run; an
+/// unregistered one has no declared type and so no order.
+fn check_run_sort(
+    path: &str,
+    table: &PathTable,
+    pointer: &str,
+    errors: &mut Vec<ErrorEntry>,
+) -> Option<ir::SortKey> {
+    match table.resolve(path) {
+        Ok(PathInfo::Scalar {
+            column: ir::Column::Run(column),
+            ..
+        }) => Some(ir::SortKey::Run(column)),
+        Ok(PathInfo::Scalar {
+            column,
+            indexed: Indexed::Full,
+            ..
+        }) => Some(ir::SortKey::Column(column)),
+        Ok(PathInfo::Scalar { .. }) => {
+            errors.push(entry(
+                &format!("{pointer}/path"),
+                ErrorCode::NotIndexed,
+                format!(
+                    "`{path}` has no declared type, so it has no order. Register an \
+                     `ext_schema` for it in the registry to make it sortable."
+                ),
+            ));
+            None
+        }
+        Ok(PathInfo::Array { .. }) => {
+            errors.push(entry(
+                &format!("{pointer}/path"),
+                ErrorCode::TypeMismatch,
+                format!("`{path}` is an array and cannot be sorted on"),
+            ));
+            None
+        }
+        Err(hint) => {
+            errors.push(entry(
+                &format!("{pointer}/path"),
+                ErrorCode::UnknownPath,
+                hint,
             ));
             None
         }
