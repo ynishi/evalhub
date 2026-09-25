@@ -1,4 +1,4 @@
-//! Pieces shared by Card and Eval: producer, attachments, relations, `ext`.
+//! Pieces shared by Card, Eval and Run: producer, attachments, relations, `ext`.
 //!
 //! # Producer
 //!
@@ -14,8 +14,10 @@
 //!
 //! An attachment is a file in object storage, addressed by its sha256. The
 //! record refers to it by `path`, a relative, `..`-free, unique-within-record
-//! name that other fields (`results[].samples_ref`, `runs[].calls`,
-//! `runs[].artifacts[]`) point at. The hub checks that referenced paths
+//! name that other fields (a Card's `results[].samples_ref`, a run's
+//! `calls`, `artifacts[]` and `error.log`) point at. A run has its own
+//! `attachments[]` and its pointers name paths there, not in the Eval
+//! header's (see `crate::run`). The hub checks that referenced paths
 //! exist in `attachments[]` and that every `sha256` has been uploaded and
 //! confirmed (see `evalhub_store::objects`); it does not open the file.
 //! `media_type` is a hint for display and download, nothing more.
@@ -36,8 +38,17 @@
 //! `version_id` on ingest; an unresolvable reference is accepted and simply
 //! does not earn the `refs_resolved` badge. Targets outside the hub are
 //! written `external:https://…` or `hf:org/repo@sha` and stored with no
-//! `version_id`. `attrs` is free-form per relation type (for `uses_eval`,
-//! which runs of the Eval this Card used).
+//! `version_id`. `attrs` is free-form per relation type.
+//!
+//! For `core/uses_eval`, `attrs.runs` is a list of `run_id`s: the runs of
+//! the cited Eval this Card used. It feeds the Card's *used set*: per Eval
+//! record, the union of `attrs.runs` over the Card's `core/uses_eval`
+//! relations resolved to that record, or, when none of them carries
+//! `attrs.runs`, every run of that record that is neither archived nor
+//! deleted when the Card is posted. The used set bounds the Card's
+//! `run_results` and is defined in full in `crate::card` ("The used set").
+//! `attrs.runs` names runs of the *record*, not of the pinned version:
+//! runs are not versioned with the Eval header.
 //!
 //! Relations are edges between *versions*. Publishing a new version of a
 //! Card does not move its edges; a reader who wants "the latest Card that

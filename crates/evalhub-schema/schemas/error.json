@@ -41,7 +41,7 @@
           "const": "counts_inconsistent"
         },
         {
-          "description": "A `samples_ref`, `calls` or `artifacts[]` entry names no `attachments[].path`.",
+          "description": "A `samples_ref`, `calls`, `artifacts[]` or `error.log` entry names no `attachments[].path`.",
           "type": "string",
           "const": "attachment_ref_unknown"
         },
@@ -51,7 +51,7 @@
           "const": "attachment_path_invalid"
         },
         {
-          "description": "A `results[].metric` is not of the form `{ns}/{name}`.",
+          "description": "A `results[].metric`, a `run_results[].metric` or a key of a run's\n`metrics` is not of the form `{ns}/{name}`.",
           "type": "string",
           "const": "metric_id_invalid"
         },
@@ -89,6 +89,71 @@
           "description": "A registry entry already exists at that address. Entries are\nimmutable, so a correction is a new version.",
           "type": "string",
           "const": "registry_entry_exists"
+        },
+        {
+          "description": "An `evalhub.eval/2.0` Eval header carries `runs`. Runs are not part\nof the header; they are written one by one or in a batch.",
+          "type": "string",
+          "const": "runs_moved"
+        },
+        {
+          "description": "A run's `status` and its detail disagree: `error` must be present\nexactly when `status` is `error`, `skip_reason` exactly when it is\n`skipped`.",
+          "type": "string",
+          "const": "run_status_detail"
+        },
+        {
+          "description": "A `run_id` is empty, contains `/`, or is longer than 200 bytes.",
+          "type": "string",
+          "const": "run_id_invalid"
+        },
+        {
+          "description": "The `run_id` in the body differs from the one in the request path.",
+          "type": "string",
+          "const": "run_id_mismatch"
+        },
+        {
+          "description": "A `run_results[]` element has neither `value` nor `label`.",
+          "type": "string",
+          "const": "run_result_value_or_label"
+        },
+        {
+          "description": "A `run_results[].eval` is not the record of any of the Card's\n`core/uses_eval` relations.",
+          "type": "string",
+          "const": "run_results_eval_unknown"
+        },
+        {
+          "description": "A `run_id` in the Card's used set has no row in that Eval (or the\nEval is one the writer may not see).",
+          "type": "string",
+          "const": "run_unknown"
+        },
+        {
+          "description": "A `run_results[].run_id` is outside the Card's used set for its `eval`.",
+          "type": "string",
+          "const": "run_not_in_used_set"
+        },
+        {
+          "description": "A Card version carries more `run_results[]` than the hub's configured limit.",
+          "type": "string",
+          "const": "too_many_run_results"
+        },
+        {
+          "description": "The `run_id` names a run that was deleted. A deleted run's id is not\nreused, because Cards that judged it would then point at different content.",
+          "type": "string",
+          "const": "run_deleted"
+        },
+        {
+          "description": "The same `run_id` appears more than once in one batch.",
+          "type": "string",
+          "const": "batch_duplicate_run_id"
+        },
+        {
+          "description": "A batch carries more runs than the hub's configured count.",
+          "type": "string",
+          "const": "batch_too_large"
+        },
+        {
+          "description": "The request body is larger than the hub's configured size in bytes.",
+          "type": "string",
+          "const": "body_too_large"
         }
       ]
     },

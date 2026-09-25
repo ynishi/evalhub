@@ -1,32 +1,54 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Card",
-  "description": "A Card: what was measured, how, and what the score was.",
+  "title": "Run",
+  "description": "One run of an Eval: one execution, its conditions, its files and what\nwas measured directly from it. A run records what happened, never\nwhether it passed; the verdict is a Card's `run_results`.",
   "type": "object",
   "properties": {
+    "artifacts": {
+      "description": "This run's `attachments[].path` entries of artifacts the run produced.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
     "attachments": {
-      "description": "Files this record refers to.",
+      "description": "Files this run refers to. `calls`, `artifacts[]` and `error.log` point here.",
       "type": "array",
       "items": {
         "$ref": "#/$defs/Attachment"
       }
     },
-    "counts": {
-      "description": "Item counts the scores were computed over. Required when `results` is non-empty.",
+    "calls": {
+      "description": "This run's `attachments[].path` holding the model calls made during the run.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "ended_at": {
+      "description": "When the run ended.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "env": {
+      "description": "The environment this run executed in. Filled from the Eval header when omitted.",
       "anyOf": [
         {
-          "$ref": "#/$defs/Counts"
+          "$ref": "#/$defs/Env"
         },
         {
           "type": "null"
         }
       ]
     },
-    "env": {
-      "description": "The environment facet.",
+    "error": {
+      "description": "How the run failed. Present exactly when `status` is `error`.",
       "anyOf": [
         {
-          "$ref": "#/$defs/Env"
+          "$ref": "#/$defs/RunError"
         },
         {
           "type": "null"
@@ -40,7 +62,7 @@
       "default": {}
     },
     "generation": {
-      "description": "The generation facet.",
+      "description": "The sampling parameters of this run. Filled from the Eval header when omitted.",
       "anyOf": [
         {
           "$ref": "#/$defs/Generation"
@@ -50,19 +72,8 @@
         }
       ]
     },
-    "grading": {
-      "description": "The grading facet.",
-      "anyOf": [
-        {
-          "$ref": "#/$defs/Grading"
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
     "harness": {
-      "description": "The harness facet.",
+      "description": "The harness that drove this run. Filled from the Eval header when omitted.",
       "anyOf": [
         {
           "$ref": "#/$defs/Harness"
@@ -72,8 +83,19 @@
         }
       ]
     },
+    "meta": {
+      "description": "Free-form JSON kept with the run and returned verbatim. The hub never\nvalidates, indexes or queries it."
+    },
+    "metrics": {
+      "description": "Values measured directly from the run, keyed by metric registry id\n`{ns}/{name}` (for example `core/tokens_out`). Grader-dependent\nvalues belong to a Card's `run_results`, not here.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "number",
+        "format": "double"
+      }
+    },
     "model": {
-      "description": "The model facet.",
+      "description": "The model this run used. Filled from the Eval header when omitted.",
       "anyOf": [
         {
           "$ref": "#/$defs/Model"
@@ -83,63 +105,31 @@
         }
       ]
     },
-    "producer": {
-      "description": "The software that wrote this record.",
-      "$ref": "#/$defs/Producer"
+    "run_id": {
+      "description": "Run identifier, unique within the Eval record. One URL segment:\nnon-empty, no `/`, at most 200 bytes.",
+      "type": "string"
     },
-    "provenance": {
-      "description": "Where the numbers came from and who ran the evaluation.",
-      "anyOf": [
-        {
-          "$ref": "#/$defs/Provenance"
-        },
-        {
-          "type": "null"
-        }
+    "skip_reason": {
+      "description": "Why the producer did not execute the run. Present exactly when\n`status` is `skipped`.",
+      "type": [
+        "string",
+        "null"
       ]
     },
-    "redaction": {
-      "description": "What the producer removed before publishing.",
-      "anyOf": [
-        {
-          "$ref": "#/$defs/Redaction"
-        },
-        {
-          "type": "null"
-        }
-      ]
+    "started_at": {
+      "description": "When the run started.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
     },
-    "relations": {
-      "description": "Edges to other records.",
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/Relation"
-      }
-    },
-    "results": {
-      "description": "The scores.",
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/ResultEntry"
-      }
-    },
-    "run_results": {
-      "description": "Per-run verdicts on the runs of the Evals this Card uses\n(`core/uses_eval`). Each `run_id` must be in the Card's used set for\nits `eval`. Added in `evalhub.card/1.1`.",
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/RunResult"
-      }
-    },
-    "schema": {
-      "description": "Schema identifier: `evalhub.card/1.1`, or `evalhub.card/1.0`, which is\nstill accepted. Both are described by this one schema.",
-      "type": "string",
-      "enum": [
-        "evalhub.card/1.0",
-        "evalhub.card/1.1"
-      ]
+    "status": {
+      "description": "The state of the execution: `ok`, `error` or `skipped`.",
+      "$ref": "#/$defs/RunStatus"
     },
     "task": {
-      "description": "The task facet.",
+      "description": "The task this run attempted. Filled from the Eval header when omitted.",
       "anyOf": [
         {
           "$ref": "#/$defs/Task"
@@ -149,12 +139,8 @@
         }
       ]
     },
-    "title": {
-      "description": "Human-readable title.",
-      "type": "string"
-    },
     "trial": {
-      "description": "The trial facet.",
+      "description": "How this run's attempt was made. Filled from the Eval header when omitted.",
       "anyOf": [
         {
           "$ref": "#/$defs/Trial"
@@ -167,41 +153,10 @@
   },
   "additionalProperties": false,
   "required": [
-    "schema",
-    "title",
-    "producer"
+    "run_id",
+    "status"
   ],
   "$defs": {
-    "Aggregation": {
-      "description": "How a score was derived from its samples.",
-      "oneOf": [
-        {
-          "description": "Arithmetic mean over samples.",
-          "type": "string",
-          "const": "mean"
-        },
-        {
-          "description": "pass@k over attempts.",
-          "type": "string",
-          "const": "pass_at_k"
-        },
-        {
-          "description": "Median over samples.",
-          "type": "string",
-          "const": "median"
-        },
-        {
-          "description": "Sum over samples.",
-          "type": "string",
-          "const": "sum"
-        },
-        {
-          "description": "A producer-defined aggregation; describe it in `ext`.",
-          "type": "string",
-          "const": "custom"
-        }
-      ]
-    },
     "Attachment": {
       "description": "A file in object storage that the record refers to by `path`.",
       "type": "object",
@@ -233,77 +188,6 @@
         "path",
         "sha256",
         "size"
-      ]
-    },
-    "ConfidenceInterval": {
-      "description": "A confidence interval.",
-      "type": "object",
-      "properties": {
-        "high": {
-          "description": "Upper bound.",
-          "type": "number",
-          "format": "double"
-        },
-        "level": {
-          "description": "Confidence level, for example `0.95`.",
-          "type": "number",
-          "format": "double"
-        },
-        "low": {
-          "description": "Lower bound.",
-          "type": "number",
-          "format": "double"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "level",
-        "low",
-        "high"
-      ]
-    },
-    "Counts": {
-      "description": "Item counts. `attempted >= completed + failed + skipped + errored`.",
-      "type": "object",
-      "properties": {
-        "attempted": {
-          "description": "Items the evaluation set out to run.",
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
-        },
-        "completed": {
-          "description": "Items that produced a gradable response.",
-          "type": "integer",
-          "format": "uint64",
-          "default": 0,
-          "minimum": 0
-        },
-        "errored": {
-          "description": "Items that errored before grading.",
-          "type": "integer",
-          "format": "uint64",
-          "default": 0,
-          "minimum": 0
-        },
-        "failed": {
-          "description": "Items that were graded as failing.",
-          "type": "integer",
-          "format": "uint64",
-          "default": 0,
-          "minimum": 0
-        },
-        "skipped": {
-          "description": "Items skipped by the harness.",
-          "type": "integer",
-          "format": "uint64",
-          "default": 0,
-          "minimum": 0
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "attempted"
       ]
     },
     "Engine": {
@@ -376,21 +260,6 @@
         }
       },
       "additionalProperties": false
-    },
-    "EvaluatorRelationship": {
-      "description": "Who ran the evaluation relative to the model's maker.",
-      "oneOf": [
-        {
-          "description": "The model's maker evaluated its own model.",
-          "type": "string",
-          "const": "first_party"
-        },
-        {
-          "description": "Someone else evaluated it.",
-          "type": "string",
-          "const": "third_party"
-        }
-      ]
     },
     "Generation": {
       "description": "Sampling parameters.",
@@ -501,79 +370,6 @@
         "commit"
       ]
     },
-    "Grader": {
-      "description": "One grader.",
-      "type": "object",
-      "properties": {
-        "kind": {
-          "description": "Grader kind (`deterministic`, `model`, `human`).",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "name": {
-          "description": "Grader name (`exact_match`, `llm_judge`, …).",
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "name"
-      ]
-    },
-    "Grading": {
-      "description": "How responses were scored. Cards only.",
-      "type": "object",
-      "properties": {
-        "aggregation": {
-          "description": "How several graders' verdicts were combined (`majority`, `all`, …).",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "ext": {
-          "description": "Extensions keyed by namespace; not fingerprinted unless registered.",
-          "type": "object",
-          "additionalProperties": true
-        },
-        "graders": {
-          "description": "Graders that produced the scores.",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/Grader"
-          }
-        },
-        "judge": {
-          "description": "Judge model, when a grader is a model.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Judge"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "rubric_sha256": {
-          "description": "sha256 of the rubric given to the graders.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "threshold": {
-          "description": "Threshold a score had to reach to count as a pass.",
-          "type": [
-            "number",
-            "null"
-          ],
-          "format": "double"
-        }
-      },
-      "additionalProperties": false
-    },
     "Hardware": {
       "description": "Hardware the evaluation ran on.",
       "type": "object",
@@ -664,34 +460,6 @@
       "required": [
         "name",
         "version"
-      ]
-    },
-    "Judge": {
-      "description": "The judge model used by a model grader.",
-      "type": "object",
-      "properties": {
-        "id": {
-          "description": "Judge model identifier.",
-          "type": "string"
-        },
-        "provider": {
-          "description": "Who served the judge.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "revision": {
-          "description": "Exact revision of the judge.",
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "id"
       ]
     },
     "Model": {
@@ -792,50 +560,6 @@
         "version"
       ]
     },
-    "Producer": {
-      "description": "The software that wrote the record. Informational; not a facet.",
-      "type": "object",
-      "properties": {
-        "name": {
-          "description": "Name of the producing software (a harness, a converter, a script).",
-          "type": "string"
-        },
-        "version": {
-          "description": "Version of the producing software.",
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "name",
-        "version"
-      ]
-    },
-    "Provenance": {
-      "description": "Where the numbers came from.",
-      "type": "object",
-      "properties": {
-        "evaluator_relationship": {
-          "description": "Who ran the evaluation relative to the model's maker.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/EvaluatorRelationship"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "source_type": {
-          "description": "What kind of source the numbers were taken from.",
-          "$ref": "#/$defs/SourceType"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "source_type"
-      ]
-    },
     "Quantization": {
       "description": "Weight quantisation.",
       "type": "object",
@@ -880,23 +604,23 @@
       },
       "additionalProperties": false
     },
-    "Redaction": {
-      "description": "The producer's statement about what it removed before publishing.",
+    "RunError": {
+      "description": "How a run failed.",
       "type": "object",
       "properties": {
-        "applied": {
-          "description": "Whether any redaction was applied.",
-          "type": "boolean"
+        "kind": {
+          "description": "Short slug naming the kind of failure, `[a-z0-9][a-z0-9._-]*`\n(for example `timeout`, `budget_exhausted`, `crash`). Chosen by the\nproducer; not a closed list. `unrecorded` means the kind is not known.",
+          "type": "string"
         },
-        "fields": {
-          "description": "Which fields were redacted, as `attachment path:field` or a record path.",
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
+        "log": {
+          "description": "This run's `attachments[].path` holding the failure's log (stderr, a trace).",
+          "type": [
+            "string",
+            "null"
+          ]
         },
-        "method": {
-          "description": "How it was applied (for example `regex+llm`).",
+        "message": {
+          "description": "What went wrong, for a human.",
           "type": [
             "string",
             "null"
@@ -905,148 +629,27 @@
       },
       "additionalProperties": false,
       "required": [
-        "applied"
+        "kind"
       ]
     },
-    "Relation": {
-      "description": "An edge from this version to another record version or an external target.",
-      "type": "object",
-      "properties": {
-        "attrs": {
-          "description": "Attributes specific to the relation type (for `uses_eval`, which runs were used).",
-          "type": [
-            "object",
-            "null"
-          ],
-          "additionalProperties": true
+    "RunStatus": {
+      "description": "The state of a run's execution. Not a verdict: pass and fail are a Card's.",
+      "oneOf": [
+        {
+          "description": "The run went to completion.",
+          "type": "string",
+          "const": "ok"
         },
-        "to": {
-          "description": "Target: `{ns}/{name}@{seq}` on the hub, or `external:<url>` / `hf:<org>/<repo>@<sha>` outside it.",
-          "type": "string"
+        {
+          "description": "The run was executed and failed along the way; `error` says how.",
+          "type": "string",
+          "const": "error"
         },
-        "type": {
-          "description": "Relation type as a registry id, `{ns}/{name}` (for example `core/uses_eval`).",
-          "type": "string"
+        {
+          "description": "The producer deliberately did not execute the run; `skip_reason` says why.",
+          "type": "string",
+          "const": "skipped"
         }
-      },
-      "additionalProperties": false,
-      "required": [
-        "type",
-        "to"
-      ]
-    },
-    "ResultEntry": {
-      "description": "One score.",
-      "type": "object",
-      "properties": {
-        "aggregation": {
-          "description": "How `value` was derived from the samples.",
-          "$ref": "#/$defs/Aggregation"
-        },
-        "by": {
-          "description": "The partition this score applies to (for example which grader).",
-          "type": [
-            "object",
-            "null"
-          ],
-          "additionalProperties": true
-        },
-        "metric": {
-          "description": "Metric as a registry id, `{ns}/{name}` (for example `core/pass_rate`).",
-          "type": "string"
-        },
-        "n": {
-          "description": "Number of samples the score was computed over.",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint64",
-          "minimum": 0
-        },
-        "samples_ref": {
-          "description": "`attachments[].path` of the per-sample rows this score summarises.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "uncertainty": {
-          "description": "Uncertainty the producer computed.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Uncertainty"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "value": {
-          "description": "The score.",
-          "type": "number",
-          "format": "double"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "metric",
-        "value",
-        "aggregation"
-      ]
-    },
-    "RunResult": {
-      "description": "The Card's verdict on one run for one metric.",
-      "type": "object",
-      "properties": {
-        "by": {
-          "description": "The partition this verdict applies to (for example which grader).",
-          "type": [
-            "object",
-            "null"
-          ],
-          "additionalProperties": true
-        },
-        "eval": {
-          "description": "The Eval record the run belongs to, `{ns}/{name}` (no `@seq`: runs\nbelong to the record, not to a version). Must be the record of one of\nthis Card's `core/uses_eval` relations.",
-          "type": "string"
-        },
-        "from": {
-          "description": "Keys of the run's `metrics` the verdict was derived from. Informational;\nthe hub does not recompute.",
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "label": {
-          "description": "The verdict as a label (for example `pass`, `fail`). At least one of\n`value` and `label` is present.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "metric": {
-          "description": "Metric as a registry id, `{ns}/{name}` (for example `core/pass`).",
-          "type": "string"
-        },
-        "run_id": {
-          "description": "The run judged. Must be in this Card's used set for `eval`.",
-          "type": "string"
-        },
-        "value": {
-          "description": "The verdict as a number. At least one of `value` and `label` is present.",
-          "type": [
-            "number",
-            "null"
-          ],
-          "format": "double"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "eval",
-        "run_id",
-        "metric"
       ]
     },
     "Sandbox": {
@@ -1068,36 +671,6 @@
       "additionalProperties": false,
       "required": [
         "image"
-      ]
-    },
-    "SourceType": {
-      "description": "The kind of source a Card's numbers were taken from.",
-      "oneOf": [
-        {
-          "description": "The producer ran the evaluation and recorded the result.",
-          "type": "string",
-          "const": "evaluation_run"
-        },
-        {
-          "description": "Transcribed from a paper.",
-          "type": "string",
-          "const": "paper"
-        },
-        {
-          "description": "Transcribed from a model card.",
-          "type": "string",
-          "const": "model_card"
-        },
-        {
-          "description": "Transcribed from a leaderboard.",
-          "type": "string",
-          "const": "leaderboard"
-        },
-        {
-          "description": "Something else; describe it in `ext`.",
-          "type": "string",
-          "const": "other"
-        }
       ]
     },
     "Task": {
@@ -1247,32 +820,6 @@
           ],
           "format": "uint64",
           "minimum": 0
-        }
-      },
-      "additionalProperties": false
-    },
-    "Uncertainty": {
-      "description": "Uncertainty of a score.",
-      "type": "object",
-      "properties": {
-        "ci": {
-          "description": "Confidence interval of the score.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ConfidenceInterval"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "stderr": {
-          "description": "Standard error of the score.",
-          "type": [
-            "number",
-            "null"
-          ],
-          "format": "double"
         }
       },
       "additionalProperties": false

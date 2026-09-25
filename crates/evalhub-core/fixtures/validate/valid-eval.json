@@ -1,5 +1,5 @@
 {
-  "schema": "evalhub.eval/1.0",
+  "schema": "evalhub.eval/2.0",
   "title": "single2 K4, 33 runs",
   "producer": {"name": "my-harness", "version": "0.4.1"},
   "eval_kind": "run_set",
@@ -10,17 +10,9 @@
   "generation": {"temperature": 0.0},
   "trial": {"k": 4},
   "env": {"git": {"origin": "https://github.com/x/y", "commit": "abc123", "dirty": false}},
-  "runs": [{
-    "run_id": "r1",
-    "started_at": "2026-09-20T10:00:00Z", "ended_at": "2026-09-20T10:02:11Z",
-    "outcome": "pass",
-    "calls": "calls/r1.jsonl",
-    "artifacts": ["artifacts/r1/diff.patch"]
-  }],
   "relations": [{"type": "core/subset_of", "to": "alice/single2-full@1"}],
   "attachments": [
-    {"path": "calls/r1.jsonl", "sha256": "a8b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6", "size": 90210, "media_type": "application/x-ndjson"},
-    {"path": "artifacts/r1/diff.patch", "sha256": "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0", "size": 3311, "media_type": "text/x-diff"}
+    {"path": "tasks.jsonl", "sha256": "a8b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6", "size": 90210, "media_type": "application/x-ndjson"}
   ],
   "redaction": {"applied": false},
   "ext": {}
