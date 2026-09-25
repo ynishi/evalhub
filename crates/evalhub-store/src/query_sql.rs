@@ -205,7 +205,7 @@ pub fn ext_expression_unqualified(
 
 /// A `text[]` literal, escaped for the array syntax and then for the SQL
 /// string that carries it.
-fn array_literal(path: &[String]) -> Result<String, StoreError> {
+pub(crate) fn array_literal(path: &[String]) -> Result<String, StoreError> {
     if path.is_empty() {
         return Err(StoreError::QueryUnsupported("empty ext path".into()));
     }
@@ -241,7 +241,7 @@ fn array_literal(path: &[String]) -> Result<String, StoreError> {
 /// What a sort key compares as, which decides how its cursor value is read
 /// back and bound again.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum KeyType {
+pub(crate) enum KeyType {
     Number,
     Text,
     Boolean,
@@ -434,7 +434,7 @@ fn push_keyset(
         q.push(cmp_symbol(tiebreak));
         q.push(" (");
         for (plan, value) in sorts.iter().zip(&cursor.keys) {
-            push_key_value(q, plan.ty, value)?;
+            push_key_value(q, plan.ty, value, "cursor")?;
             q.push(", ");
         }
         q.push_bind(cursor.version_id);
@@ -452,11 +452,11 @@ fn push_keyset(
         q.push("(");
         for (j, earlier) in sorts.iter().take(i).enumerate() {
             q.push(format!("{} = ", earlier.expr));
-            push_key_value(q, earlier.ty, &cursor.keys[j])?;
+            push_key_value(q, earlier.ty, &cursor.keys[j], "cursor")?;
             q.push(" AND ");
         }
         q.push(format!("{} {} ", plan.expr, cmp_symbol(plan.dir)));
-        push_key_value(q, plan.ty, &cursor.keys[i])?;
+        push_key_value(q, plan.ty, &cursor.keys[i], "cursor")?;
         q.push(")");
     }
     if !sorts.is_empty() {
@@ -465,7 +465,7 @@ fn push_keyset(
     q.push("(");
     for (j, plan) in sorts.iter().enumerate() {
         q.push(format!("{} = ", plan.expr));
-        push_key_value(q, plan.ty, &cursor.keys[j])?;
+        push_key_value(q, plan.ty, &cursor.keys[j], "cursor")?;
         q.push(" AND ");
     }
     q.push(format!("v.version_id {} ", cmp_symbol(tiebreak)));
@@ -482,25 +482,36 @@ fn cmp_symbol(dir: ir::Dir) -> &'static str {
     }
 }
 
-/// Bind one cursor value according to its key's type.
-fn push_key_value(
+/// Bind one value according to its key's type. `what` says where the
+/// value came from (`cursor`, `filter`) for the error message.
+///
+/// A timestamp is parsed as RFC 3339 (`DateTime::parse_from_rfc3339`),
+/// the format the DSL documents and the one a cursor this crate wrote
+/// carries, rather than with chrono's general `FromStr`.
+pub(crate) fn push_key_value(
     q: &mut QueryBuilder<Postgres>,
     ty: KeyType,
     value: &Value,
+    what: &str,
 ) -> Result<(), StoreError> {
     match ty {
         KeyType::Number => q.push_bind(as_f64(value)?),
         KeyType::Text => q.push_bind(as_string(value)?),
         KeyType::Boolean => q.push_bind(as_bool(value)?),
-        KeyType::Timestamp => {
-            let text = as_string(value)?;
-            let at: DateTime<Utc> = text
-                .parse::<DateTime<Utc>>()
-                .map_err(|e| StoreError::QueryUnsupported(format!("cursor timestamp: {e}")))?;
-            q.push_bind(at)
-        }
+        KeyType::Timestamp => q.push_bind(parse_timestamp(value, what)?),
     };
     Ok(())
+}
+
+/// An RFC 3339 timestamp literal, or [`StoreError::QueryUnsupported`]
+/// naming `what` (`cursor`, `filter`) and the literal.
+pub(crate) fn parse_timestamp(value: &Value, what: &str) -> Result<DateTime<Utc>, StoreError> {
+    let text = as_string(value)?;
+    DateTime::parse_from_rfc3339(&text)
+        .map(|t| t.with_timezone(&Utc))
+        .map_err(|e| {
+            StoreError::QueryUnsupported(format!("{what} timestamp {text:?} is not RFC 3339: {e}"))
+        })
 }
 
 /// Render a predicate.
@@ -821,27 +832,27 @@ fn push_array(
     Ok(())
 }
 
-fn as_f64(value: &Value) -> Result<f64, StoreError> {
+pub(crate) fn as_f64(value: &Value) -> Result<f64, StoreError> {
     value
         .as_f64()
         .ok_or_else(|| StoreError::QueryUnsupported(format!("{value} is not a number")))
 }
 
-fn as_string(value: &Value) -> Result<String, StoreError> {
+pub(crate) fn as_string(value: &Value) -> Result<String, StoreError> {
     value
         .as_str()
         .map(str::to_owned)
         .ok_or_else(|| StoreError::QueryUnsupported(format!("{value} is not a string")))
 }
 
-fn as_bool(value: &Value) -> Result<bool, StoreError> {
+pub(crate) fn as_bool(value: &Value) -> Result<bool, StoreError> {
     value
         .as_bool()
         .ok_or_else(|| StoreError::QueryUnsupported(format!("{value} is not a boolean")))
 }
 
 /// `{"a": {"b": v}}` for the path `["a", "b"]`, which is what `@>` wants.
-fn nest(path: &[String], value: Value) -> Value {
+pub(crate) fn nest(path: &[String], value: Value) -> Value {
     let mut out = value;
     for key in path.iter().rev() {
         out = serde_json::json!({ key.clone(): out });
@@ -850,7 +861,7 @@ fn nest(path: &[String], value: Value) -> Value {
 }
 
 /// `$."a"."b"` for the path `["a", "b"]`.
-fn jsonpath(path: &[String]) -> Result<String, StoreError> {
+pub(crate) fn jsonpath(path: &[String]) -> Result<String, StoreError> {
     let mut out = String::from("$");
     for segment in path {
         if segment.chars().any(|c| c.is_control()) {
@@ -867,7 +878,7 @@ fn jsonpath(path: &[String]) -> Result<String, StoreError> {
 
 /// Escape `%`, `_` and `\` so a search string matches literally under
 /// `LIKE … ESCAPE '\'`.
-fn escape_like(s: &str) -> String {
+pub(crate) fn escape_like(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         if matches!(c, '%' | '_' | '\\') {
@@ -939,7 +950,11 @@ pub async fn run(
 }
 
 /// Read the `k{i}` column back as the JSON a cursor carries.
-fn read_key(row: &sqlx::postgres::PgRow, i: usize, ty: KeyType) -> Result<Value, StoreError> {
+pub(crate) fn read_key(
+    row: &sqlx::postgres::PgRow,
+    i: usize,
+    ty: KeyType,
+) -> Result<Value, StoreError> {
     let name = format!("k{i}");
     let value = match ty {
         KeyType::Number => row

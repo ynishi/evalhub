@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO run_results (version_id, ordinal, eval_record_id, run_id, metric, value, label, by)\n         SELECT $1, o, e, i, m, v, l, b\n         FROM UNNEST($2::int4[], $3::uuid[], $4::text[], $5::text[], $6::float8[], $7::text[], $8::jsonb[])\n           AS t (o, e, i, m, v, l, b)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4Array",
+        "UuidArray",
+        "TextArray",
+        "TextArray",
+        "Float8Array",
+        "TextArray",
+        "JsonbArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "bd6e1c5c7e362fa4e730ae88272686f73e65c2aa9f8218f0fdef22f52c3b9ea4"
+}

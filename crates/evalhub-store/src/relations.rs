@@ -6,7 +6,10 @@
 //! `relations (from_version_id, type, to_version_id, to_external, attrs)`.
 //! Edges are written from `relations[]` on ingest (in `records`, inside
 //! the version's transaction) and can be added later with
-//! `POST .../{name}@{seq}/relations` ([`add`]). `to_version_id` is the
+//! `POST .../{name}@{seq}/relations` ([`add`]). A `core/uses_eval` edge
+//! from a Card into an Eval also fixes the Card version's *used set* for
+//! that Eval record (`card_eval_runs`), on ingest and on [`add`] alike;
+//! see "A Card's runs" in [`crate::records`]. `to_version_id` is the
 //! resolved target, or `NULL` with `to_external` set for targets outside
 //! the hub and for references that did not resolve at write time. `type`
 //! is a registry id; the inverse name is looked up from the registry at
@@ -51,17 +54,35 @@
 //! Private endpoints the caller cannot see are still nodes, with
 //! `visible == false` and only `version_id` / `content_hash` meaningful.
 //!
+//! The judgements of a Card (`run_results[]`) are withheld the same way
+//! when they name an Eval the reader may not see: [`hidden_evals`] says,
+//! per Card version, which Evals and how many elements, so the read path
+//! can remove them and report the count. Neither the Eval's name nor a run
+//! id nor a verdict reaches such a reader.
+//!
 //! # The comparison view
 //!
 //! `GET /evals/{ns}/{name}/cards?version=&group_by=fingerprint.{facet}`
 //! lists every Card whose `core/uses_eval` edge points at the given Eval
 //! version ([`cards_using_eval`]): the latest live version of each such
 //! Card, visible to the caller, with its facet fingerprints and
-//! `same_harness` / `same_model` set when its harness / model fingerprint
-//! equals the Eval's. Grouping by a facet is the caller's fold over
-//! `fingerprints`. That is the whole of the hub's comparison logic: it
+//! `same_harness` / `same_model`. Grouping by a facet is the caller's fold
+//! over `fingerprints`. That is the whole of the hub's comparison logic: it
 //! lines records up and labels agreement on axes; it does not rank,
 //! average, or declare a winner.
+//!
+//! Conditions are per run, so agreement is judged against the runs the
+//! Card used: `same_harness` / `same_model` is true when the Card's
+//! fingerprint equals that of *every* run in its used set for the Eval
+//! record, and false when any used run's differs or is missing, or the
+//! Card has none. A Card with an empty used set (the Eval had no runs when
+//! it was posted, or its edge did not resolve then, so nothing was
+//! recorded) is compared with the Eval version's header instead, which is
+//! what the view did before runs were rows and what an Eval without runs
+//! still means. Each row also carries the used set's summary: `runs_used`,
+//! `used_set_hash` (the `evalhub_core::run::runs_hash` formula over the
+//! used runs' current content hashes) and `changed_since_card` (the used
+//! runs overwritten since the Card used them).
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
@@ -261,10 +282,24 @@ pub struct ComparisonRow {
     pub content_hash: Vec<u8>,
     /// Facet fingerprints of the Card, keyed by facet name.
     pub fingerprints: BTreeMap<String, Vec<u8>>,
-    /// The Card's harness fingerprint equals the Eval's.
+    /// The Card's harness fingerprint equals that of every run in its used
+    /// set for this Eval; `false` when any used run's differs or is
+    /// missing, or the Card has none. With an empty used set, the Eval
+    /// version's header fingerprint is compared instead (see the module
+    /// doc).
     pub same_harness: bool,
-    /// The Card's model fingerprint equals the Eval's.
+    /// As `same_harness`, for the model fingerprint.
     pub same_model: bool,
+    /// How many runs the Card's latest version used from this Eval record
+    /// (its `card_eval_runs` rows).
+    pub runs_used: i64,
+    /// `evalhub_core::run::runs_hash` over the used runs' *current*
+    /// content hashes. Equal to the hash over the posting-time hashes
+    /// exactly when `changed_since_card` is empty.
+    pub used_set_hash: Vec<u8>,
+    /// The used runs whose content hash differs from the one recorded when
+    /// the Card used them (overwritten since), by `run_id` ascending.
+    pub changed_since_card: Vec<String>,
 }
 
 /// Whether a reader whose token covers `caller_ns` may see a record in
@@ -445,6 +480,20 @@ async fn resolve_stored(
 /// plus the source's own namespace (the caller has checked `write` on
 /// it). An unresolvable or invisible hub reference is stored textually.
 /// Writes an audit row. `actor` is `(user_id, token_id)`.
+///
+/// A `core/uses_eval` edge from a Card version that resolves to an Eval's
+/// version fixes that version's used set for the Eval record in the same
+/// transaction, as the ingest does (this path has no `run_results`), with
+/// one difference: here the used set only grows. Runs already recorded
+/// for the version stay recorded with their posting-time hashes, and the
+/// new edge can only add runs, because the version's `run_results[]` were
+/// checked against the set as it was. `extend_used_set` below has the
+/// detail.
+///
+/// Errors: [`StoreError::SourceVersionUnknown`];
+/// [`StoreError::CardRunsRejected`] when `attrs.runs` names a run with no
+/// row in the Eval (`run_unknown` at `/attrs/runs/{k}`), in which case no
+/// edge is written.
 pub async fn add(
     pool: &PgPool,
     from_version_id: Uuid,
@@ -461,7 +510,7 @@ pub async fn add(
     if !writer_ns.contains(&from.ns) {
         writer_ns.push(from.ns.clone());
     }
-    let (to_version_id, to_external) = match target {
+    let (mut to_version_id, mut to_external) = match target {
         RelationTarget::Version { ns, name, seq } => {
             match resolve_ref(pool, ns, name, seq, &writer_ns).await? {
                 Some(id) => (Some(id), None),
@@ -471,6 +520,17 @@ pub async fn add(
         RelationTarget::External(s) => (None, Some(s.to_string())),
     };
     let mut tx = pool.begin().await?;
+    if relation_type == USES_EVAL
+        && from.record_type == "card"
+        && let Some(to) = to_version_id
+        && !extend_used_set(&mut tx, &from, to, attrs, &writer_ns).await?
+    {
+        // The Eval turned private between resolution and the lock: store
+        // the edge as text, as any reference to a version the writer may
+        // not see is stored.
+        to_version_id = None;
+        to_external = Some(target.text());
+    }
     sqlx::query!(
         "INSERT INTO relations (from_version_id, type, to_version_id, to_external, attrs)
          VALUES ($1, $2, $3, $4, $5)",
@@ -507,6 +567,154 @@ pub async fn add(
         to,
         attrs: attrs.cloned(),
     })
+}
+
+/// A `core/uses_eval` edge from the Card version `from` to the version
+/// `to` is being added: when `to` is an Eval's, fix the used set it
+/// contributes and record it, inside the edge's transaction. Returns
+/// `false` when the Eval is no longer visible to `writer_ns` under the
+/// lock, having written nothing; the caller then stores the edge
+/// unresolved.
+///
+/// Locks as the ingest does: the Card record `FOR UPDATE`, then the Eval
+/// record `FOR SHARE`, re-reading its visibility under that lock
+/// ([`crate::used_set`]: the resolution before the transaction read it
+/// unlocked, and a `set_visibility` may have committed since).
+///
+/// **The used set only grows.** It is recomputed over every
+/// `core/uses_eval` edge of `from` into the same Eval record, the new one
+/// included, and the runs not yet recorded are inserted with their hashes
+/// now; rows already in `card_eval_runs` stay, with the hash recorded when
+/// they were added. This is not the ingest's rule applied from scratch:
+/// under it, a Card posted with an edge carrying no `attrs.runs` (every
+/// live run) that later gains an edge with `attrs.runs: ["rX"]` would have
+/// a used set of `{rX}`, and every run it was recorded as using, and may
+/// have judged in its `run_results[]`, would fall outside its own used
+/// set. The version's `run_results[]` were checked against the set as it
+/// was, and a version is write-once, so the set may gain runs but never
+/// lose one. Only the new edge's `attrs.runs` are checked
+/// (`/attrs/runs/{k}`); the stored edges' runs had rows when they were
+/// written, and a run row is never deleted.
+async fn extend_used_set(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    from: &VersionInfo,
+    to: Uuid,
+    attrs: Option<&Value>,
+    writer_ns: &[String],
+) -> Result<bool, StoreError> {
+    let target = sqlx::query!(
+        "SELECT v.record_id, r.type AS record_type
+         FROM versions v JOIN records r ON r.id = v.record_id
+         WHERE v.version_id = $1",
+        to,
+    )
+    .fetch_optional(&mut **tx)
+    .await?;
+    let Some(target) = target.filter(|t| t.record_type == "eval") else {
+        return Ok(true);
+    };
+    sqlx::query!(
+        "SELECT id FROM records WHERE id = $1 FOR UPDATE",
+        from.record_id
+    )
+    .fetch_one(&mut **tx)
+    .await?;
+    let visible =
+        crate::used_set::lock_evals(tx, &std::iter::once(target.record_id).collect(), writer_ns)
+            .await?;
+    if !visible.contains(&target.record_id) {
+        return Ok(false);
+    }
+
+    let stored = sqlx::query_scalar!(
+        "SELECT rel.attrs FROM relations rel
+         JOIN versions tv ON tv.version_id = rel.to_version_id
+         WHERE rel.from_version_id = $1 AND rel.type = $2 AND tv.record_id = $3",
+        from.version_id,
+        USES_EVAL,
+        target.record_id,
+    )
+    .fetch_all(&mut **tx)
+    .await?;
+    let mut uses: Vec<crate::used_set::UsesEval> = stored
+        .iter()
+        .map(|attrs| crate::used_set::UsesEval {
+            eval_record_id: target.record_id,
+            runs: crate::used_set::UsesEval::runs_of(attrs.as_ref()),
+            runs_path: None,
+        })
+        .collect();
+    uses.push(crate::used_set::UsesEval {
+        eval_record_id: target.record_id,
+        runs: crate::used_set::UsesEval::runs_of(attrs),
+        runs_path: Some("/attrs/runs".to_string()),
+    });
+    let mut errors = Vec::new();
+    let used = crate::used_set::fix(tx, &uses, &mut errors).await?;
+    if !errors.is_empty() {
+        crate::used_set::sort_entries(&mut errors);
+        return Err(StoreError::CardRunsRejected(errors));
+    }
+    crate::used_set::insert(tx, from.version_id, &used).await?;
+    Ok(true)
+}
+
+/// An Eval whose runs a Card version judges (`run_results[].eval`) and
+/// that a reader may not see: what a read path needs to withhold those
+/// `run_results[]` elements and say how many it withheld.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HiddenEval {
+    /// The Eval record (`run_results.eval_record_id`).
+    pub eval_record_id: Uuid,
+    /// Its namespace: `run_results[].eval` is `{ns}/{name}`.
+    pub ns: String,
+    /// Its name.
+    pub name: String,
+    /// How many `run_results[]` elements of the version name it.
+    pub run_results: i64,
+}
+
+/// For each of `card_version_ids`, the Eval records named by its
+/// `run_results[]` that a reader covering `caller_ns` may not see, by
+/// `(ns, name)`. Versions with none are absent from the map.
+///
+/// The second input of the server's redaction, beside [`hidden_targets`]:
+/// that one covers the resolved `relations[]` elements, this one the
+/// judgements. A read path removes every `run_results[]` element whose
+/// `eval` is `{ns}/{name}` of one of these, and reports the count, never
+/// the name, run ids or verdicts. Every stored `run_results` row names an
+/// Eval the writer could see when the Card was posted (the ingest refuses
+/// anything else), so there is no unresolved case here. Cost: one
+/// grouped read over the versions' `run_results`.
+pub async fn hidden_evals(
+    pool: &PgPool,
+    card_version_ids: &[Uuid],
+    caller_ns: &[String],
+) -> Result<HashMap<Uuid, Vec<HiddenEval>>, StoreError> {
+    let rows = sqlx::query!(
+        r#"SELECT rr.version_id, r.id AS eval_record_id, r.ns, r.name, r.visibility,
+                  COUNT(*) AS "run_results!"
+           FROM run_results rr JOIN records r ON r.id = rr.eval_record_id
+           WHERE rr.version_id = ANY($1)
+           GROUP BY rr.version_id, r.id, r.ns, r.name, r.visibility
+           ORDER BY rr.version_id, r.ns, r.name"#,
+        card_version_ids,
+    )
+    .fetch_all(pool)
+    .await?;
+    let mut out: HashMap<Uuid, Vec<HiddenEval>> = HashMap::new();
+    for r in rows {
+        if visible_to(&r.visibility, &r.ns, caller_ns) {
+            continue;
+        }
+        out.entry(r.version_id).or_default().push(HiddenEval {
+            eval_record_id: r.eval_record_id,
+            ns: r.ns,
+            name: r.name,
+            run_results: r.run_results,
+        });
+    }
+    Ok(out)
 }
 
 /// For each of `version_ids`, the targets of its resolved edges that a
@@ -747,7 +955,15 @@ async fn fingerprints_of(
 
 /// The comparison view: every visible Card whose latest live version has a
 /// `core/uses_eval` edge (resolved or textual) to `eval_version_id`, with
-/// its fingerprints and the `same_harness` / `same_model` flags.
+/// its fingerprints, the `same_harness` / `same_model` flags over its used
+/// set, and the used set's summary. See the module doc.
+///
+/// An empty used set (the Eval had no runs when the Card was posted, or
+/// the Card's `attrs.runs` is an explicit `[]`) compares with the Eval
+/// version's header fingerprint, as the view did before 0.2.0.
+///
+/// Cost: a handful of reads per Card, plus one read of every listed Card's
+/// used set for the Eval record.
 pub async fn cards_using_eval(
     pool: &PgPool,
     eval_version_id: Uuid,
@@ -785,13 +1001,30 @@ pub async fn cards_using_eval(
         by_record.insert(info.record_id, info);
     }
 
+    let card_versions: Vec<Uuid> = by_record.values().map(|i| i.version_id).collect();
+    // One statement: the flags and the summary of a row both come from it,
+    // so they cannot disagree with each other.
+    let mut used =
+        crate::used_set::read(&mut *pool.acquire().await?, &card_versions, eval.record_id).await?;
+
     let mut out = Vec::with_capacity(by_record.len());
     for info in by_record.into_values() {
         let fp = fingerprints_of(pool, info.version_id).await?;
-        let same = |facet: &str| match (fp.get(facet), eval_fp.get(facet)) {
-            (Some(a), Some(b)) => a == b,
-            _ => false,
+        let runs = used.remove(&info.version_id).unwrap_or_default();
+        let same = |facet: &str, of_run: fn(&crate::used_set::UsedRun) -> Option<&Vec<u8>>| {
+            let Some(card) = fp.get(facet) else {
+                return false;
+            };
+            if runs.is_empty() {
+                // No used run to compare with: the Eval had no runs when
+                // the Card was posted, or the edge did not resolve then.
+                return eval_fp.get(facet) == Some(card);
+            }
+            runs.iter().all(|r| of_run(r) == Some(card))
         };
+        let same_harness = same("harness", |r| r.harness.as_ref());
+        let same_model = same("model", |r| r.model.as_ref());
+        let summary = crate::used_set::summarise(&runs)?;
         let title = sqlx::query!(
             "SELECT title FROM versions WHERE version_id = $1",
             info.version_id
@@ -806,9 +1039,12 @@ pub async fn cards_using_eval(
             seq: info.seq,
             title,
             content_hash: info.content_hash,
-            same_harness: same("harness"),
-            same_model: same("model"),
+            same_harness,
+            same_model,
             fingerprints: fp,
+            runs_used: summary.runs_used,
+            used_set_hash: summary.used_set_hash,
+            changed_since_card: summary.changed_since_card,
         });
     }
     out.sort_by(|a, b| (&a.ns, &a.name).cmp(&(&b.ns, &b.name)));

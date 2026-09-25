@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT rel.attrs FROM relations rel\n         JOIN versions tv ON tv.version_id = rel.to_version_id\n         WHERE rel.from_version_id = $1 AND rel.type = $2 AND tv.record_id = $3",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "attrs",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "relations",
+            "name": "attrs"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "29a27efe079930f232aff590777e09ae73b349b0d31e50a4f4d402d5c44c2af6"
+}

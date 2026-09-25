@@ -1,0 +1,79 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT c.card_version_id, c.run_id, c.content_hash AS posted, u.content_hash AS current,\n                  (SELECT f.fingerprint FROM run_fingerprints f\n                   WHERE f.record_id = c.eval_record_id AND f.run_id = c.run_id\n                     AND f.facet = 'harness') AS harness,\n                  (SELECT f.fingerprint FROM run_fingerprints f\n                   WHERE f.record_id = c.eval_record_id AND f.run_id = c.run_id\n                     AND f.facet = 'model') AS model\n           FROM card_eval_runs c\n           JOIN runs u ON u.record_id = c.eval_record_id AND u.run_id = c.run_id\n           WHERE c.card_version_id = ANY($1) AND c.eval_record_id = $2\n           ORDER BY c.card_version_id, c.run_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "card_version_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "card_eval_runs",
+            "name": "card_version_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "run_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "card_eval_runs",
+            "name": "run_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "posted",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "card_eval_runs",
+            "name": "content_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "current",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "runs",
+            "name": "content_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "harness",
+        "type_info": "Bytea",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "model",
+        "type_info": "Bytea",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "a8970d804889332833e08107a55ea49dc40d228233598162904571e22b81c417"
+}

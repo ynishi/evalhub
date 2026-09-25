@@ -58,8 +58,12 @@
 //! the header's: the ones it omits are copied from the latest live header
 //! when it is written, and the copy is stored and hashed, so a later header
 //! changes no run. `run_results` and `card_eval_runs` are the Card side:
-//! a Card version's per-run judgements and the runs it used, each with the
-//! content hash it saw.
+//! a Card version's per-run judgements and the runs it used (its *used
+//! set*, fixed when the Card is posted, under a share lock on the Eval
+//! row), each with the content hash it saw; a run overwritten since shows
+//! as changed ([`records`], "A Card's runs"). [`runs::project`] reads the
+//! runs of one Eval as rows joined with chosen Cards' judgements, through
+//! the SQL of [`run_sql`].
 //!
 //! Release 0.2.0 still accepts an `evalhub.eval/1.0` body (header and
 //! `runs[]` together); [`records::ingest`] splits it and writes the runs
@@ -139,18 +143,27 @@
 //! ([`records::runs_summary`]). Write paths do not filter the record
 //! written; the server has checked `write` on the namespace.
 //!
+//! A Card's judgements follow the Card, but name runs of Evals: a reader
+//! who may not see an Eval is never shown its run ids or verdicts
+//! ([`relations::hidden_evals`] tells the read path what to withhold), and
+//! a writer who may not see an Eval cannot learn whether a run exists in
+//! it (`run_unknown`, the same answer as for a missing run).
+//!
 //! # Modules
 //!
 //! - [`pool`] — connection pool and migration runner.
 //! - [`auth`] — users, namespaces and tokens: the identity rows.
 //! - [`records`] — names, versions, labels, tombstones, idempotent create,
 //!   the 1.0 → 2.0 split at ingest, the run summary of an Eval.
-//! - [`runs`] — run rows: put, batch, get, archive, delete, `runs_hash`.
+//! - [`runs`] — run rows: put, batch, get, archive, delete, `runs_hash`,
+//!   and the run projection joined with Cards' judgements.
 //! - [`objects`] — attachment lifecycle: presign, confirm, reference count, GC.
-//! - [`relations`] — edges, resolution, traversal, the comparison view.
+//! - [`relations`] — edges, resolution, traversal, the comparison view,
+//!   the Evals withheld from a Card's judgements.
 //! - [`registry`] — registry entries and the `applying` transition.
 //! - [`index`] — expression-index creation for registered `ext` paths.
 //! - [`query_sql`] — IR to SQL, including cursor predicates.
+//! - [`run_sql`] — run projection IR to SQL, with a NULL-aware keyset.
 //! - [`audit`] — append-only audit rows.
 //!
 //! Migrations are embedded from `migrations/` with `sqlx::migrate!`; they
@@ -166,7 +179,9 @@ pub mod query_sql;
 pub mod records;
 pub mod registry;
 pub mod relations;
+pub mod run_sql;
 pub mod runs;
+mod used_set;
 
 /// The connection pool type handed to the server. Re-exported so that no
 /// other crate needs a direct `sqlx` dependency.
