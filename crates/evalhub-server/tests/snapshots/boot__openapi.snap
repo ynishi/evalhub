@@ -32,6 +32,20 @@ expression: body
         ],
         "type": "object"
       },
+      "ArchiveBody": {
+        "additionalProperties": false,
+        "description": "Body of `PATCH …/runs/{run_id}`.",
+        "properties": {
+          "archived": {
+            "description": "`true` hides the run from everyone but members of the namespace and\nfrom the summary counts; `false` shows it again. Changes no hash.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "archived"
+        ],
+        "type": "object"
+      },
       "AuditEntry": {
         "description": "One entry of the log.",
         "properties": {
@@ -111,6 +125,42 @@ expression: body
         ],
         "type": "object"
       },
+      "BatchBody": {
+        "additionalProperties": false,
+        "description": "Body of `POST …/runs:batch`.",
+        "properties": {
+          "runs": {
+            "description": "The runs to write, each a run body (`GET /schemas/run`) carrying\nits own `run_id`. At most `limits.batch_runs` elements.",
+            "items": true,
+            "type": "array"
+          }
+        },
+        "required": [
+          "runs"
+        ],
+        "type": "object"
+      },
+      "BatchResponse": {
+        "description": "Response of `POST …/runs:batch`.",
+        "properties": {
+          "runs": {
+            "description": "One entry per element of the request, in request order.",
+            "items": {
+              "$ref": "#/components/schemas/RunWriteDto"
+            },
+            "type": "array"
+          },
+          "runs_hash": {
+            "description": "Hex `runs_hash` of the Eval after the batch.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "runs",
+          "runs_hash"
+        ],
+        "type": "object"
+      },
       "ComparisonDto": {
         "description": "The comparison view: Cards measured on one Eval version.",
         "properties": {
@@ -176,6 +226,13 @@ expression: body
       "ComparisonRowDto": {
         "description": "One Card in the comparison view.",
         "properties": {
+          "changed_since_card": {
+            "description": "The used runs overwritten since the Card was posted, by `run_id`\nascending. Empty when the Card still describes the runs it judged.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "content_hash": {
             "description": "sha256 of the canonical body.",
             "type": "string"
@@ -195,12 +252,17 @@ expression: body
             "description": "Namespace.",
             "type": "string"
           },
+          "runs_used": {
+            "description": "How many runs of this Eval the Card version used (its used set).",
+            "format": "int64",
+            "type": "integer"
+          },
           "same_harness": {
-            "description": "The Card's harness fingerprint equals the Eval's.",
+            "description": "The Card's harness fingerprint equals that of every run in its used\nset for this Eval (with an empty used set, the Eval version's\nheader fingerprint). `false` when any differs or is missing.",
             "type": "boolean"
           },
           "same_model": {
-            "description": "The Card's model fingerprint equals the Eval's.",
+            "description": "As `same_harness`, for the model fingerprint.",
             "type": "boolean"
           },
           "seq": {
@@ -215,6 +277,10 @@ expression: body
               "null"
             ]
           },
+          "used_set_hash": {
+            "description": "Hex `evalhub_core::run::runs_hash` over the used runs' current\ncontent hashes. It changes exactly when a used run is overwritten.",
+            "type": "string"
+          },
           "version_id": {
             "description": "The Card's latest live version.",
             "type": "string"
@@ -228,7 +294,10 @@ expression: body
           "content_hash",
           "fingerprints",
           "same_harness",
-          "same_model"
+          "same_model",
+          "runs_used",
+          "used_set_hash",
+          "changed_since_card"
         ],
         "type": "object"
       },
@@ -249,6 +318,35 @@ expression: body
         "required": [
           "size",
           "hashed_by_hub"
+        ],
+        "type": "object"
+      },
+      "ConvertedRunsDto": {
+        "description": "The runs split off an `evalhub.eval/1.0` body by `POST /evals/{ns}/{name}`,\nas `POST …/runs:batch` reports runs, plus the ids the body repeated.",
+        "properties": {
+          "duplicate_run_ids": {
+            "description": "Every `run_id` that appeared more than once in `runs[]`; the last\nelement carrying it is the one written. 0.1.x accepted such\nbodies, so they are not refused.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "runs": {
+            "description": "One entry per distinct `run_id`, in the order each id first\nappeared in the body's `runs[]`.",
+            "items": {
+              "$ref": "#/components/schemas/RunWriteDto"
+            },
+            "type": "array"
+          },
+          "runs_hash": {
+            "description": "Hex `runs_hash` of the Eval after the write.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "runs",
+          "runs_hash",
+          "duplicate_run_ids"
         ],
         "type": "object"
       },
@@ -588,6 +686,24 @@ expression: body
         },
         "required": [
           "errors"
+        ],
+        "type": "object"
+      },
+      "EvalRunsPath": {
+        "description": "Path of an Eval's runs: `/evals/{ns}/{name}/runs` and\n`/evals/{ns}/{name}/runs:batch`.",
+        "properties": {
+          "name": {
+            "description": "Name of the Eval. No `@{seq}`: runs belong to the record, not to a\nversion.",
+            "type": "string"
+          },
+          "ns": {
+            "description": "Namespace of the Eval: a user login or an organisation slug.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ns",
+          "name"
         ],
         "type": "object"
       },
@@ -1571,6 +1687,536 @@ expression: body
         ],
         "type": "object"
       },
+      "RunCardCellDto": {
+        "description": "What one Card of the request says about one run.",
+        "properties": {
+          "changed": {
+            "description": "The run was overwritten since the Card used it.",
+            "type": "boolean"
+          },
+          "results": {
+            "description": "The Card's `run_results[]` entries for the run, in the Card's\norder. Empty when the Card did not judge it.",
+            "items": {
+              "$ref": "#/components/schemas/RunJudgementDto"
+            },
+            "type": "array"
+          },
+          "used": {
+            "description": "The run is in the Card's used set for this Eval.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "used",
+          "changed",
+          "results"
+        ],
+        "type": "object"
+      },
+      "RunEnvelope": {
+        "description": "A run as read back.\n\nA deleted run is `{ run_id, content_hash, tombstone }` and nothing\nelse, as a tombstoned version keeps its commitment and loses its body.",
+        "properties": {
+          "archived": {
+            "description": "Whether the run is archived. Only members of the namespace ever see\n`true`. Absent when deleted.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "content_hash": {
+            "description": "Hex sha256 of the stored run. Kept when the run is deleted.",
+            "type": "string"
+          },
+          "created_at": {
+            "description": "When the id was first written. Absent when deleted.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "run": {
+            "description": "The stored run: the body as written, with the facets it omitted\ncopied from the header then, in canonical form. Absent when deleted."
+          },
+          "run_id": {
+            "description": "The run's id within the Eval.",
+            "type": "string"
+          },
+          "tombstone": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TombstoneDto"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Present when the run was deleted; everything but `run_id` and\n`content_hash` is then absent."
+          },
+          "updated_at": {
+            "description": "When the content last changed, or the run was archived or\nunarchived. Absent when deleted.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "run_id",
+          "content_hash"
+        ],
+        "type": "object"
+      },
+      "RunJudgementDto": {
+        "description": "One `run_results[]` entry of a Card for a run.",
+        "properties": {
+          "by": {
+            "description": "Who or what judged, as the Card says."
+          },
+          "label": {
+            "description": "The categorical judgement, if any.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "metric": {
+            "description": "The metric judged, `{ns}/{name}`.",
+            "type": "string"
+          },
+          "value": {
+            "description": "The numeric judgement, if any.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "metric"
+        ],
+        "type": "object"
+      },
+      "RunPageCardDto": {
+        "description": "A Card of the request, as the projection joined it.",
+        "properties": {
+          "card": {
+            "description": "The Card, `{ns}/{name}`.",
+            "type": "string"
+          },
+          "changed_since_card": {
+            "description": "The used runs overwritten since the Card used them, by `run_id`.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "posted_used_set_hash": {
+            "description": "Hex `runs_hash` over the hashes recorded when the Card used the\nruns. Equal to `used_set_hash` exactly when `changed_since_card`\nis empty.",
+            "type": "string"
+          },
+          "runs_used": {
+            "description": "How many runs of this Eval the version used.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "seq": {
+            "description": "That version's sequence number.",
+            "format": "int32",
+            "type": "integer"
+          },
+          "used_set_hash": {
+            "description": "Hex `runs_hash` over the used runs' current content hashes.",
+            "type": "string"
+          },
+          "version_id": {
+            "description": "Its latest live version, whose judgements are joined (ULID).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "card",
+          "version_id",
+          "seq",
+          "runs_used",
+          "used_set_hash",
+          "posted_used_set_hash",
+          "changed_since_card"
+        ],
+        "type": "object"
+      },
+      "RunPageDto": {
+        "description": "One page of the run projection.",
+        "properties": {
+          "cards": {
+            "description": "The Cards of the request, in request order.",
+            "items": {
+              "$ref": "#/components/schemas/RunPageCardDto"
+            },
+            "type": "array"
+          },
+          "items": {
+            "description": "The runs on this page.",
+            "items": {
+              "$ref": "#/components/schemas/RunRowDto"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "description": "Cursor for the next page, or `null` on the last page.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "cards",
+          "items"
+        ],
+        "type": "object"
+      },
+      "RunPath": {
+        "description": "Path of one run: `/evals/{ns}/{name}/runs/{run_id}`.",
+        "properties": {
+          "name": {
+            "description": "Name of the Eval. No `@{seq}`: runs belong to the record, not to a\nversion.",
+            "type": "string"
+          },
+          "ns": {
+            "description": "Namespace of the Eval: a user login or an organisation slug.",
+            "type": "string"
+          },
+          "run_id": {
+            "description": "The run's id within the Eval: non-empty, no `/`, at most 200 bytes.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ns",
+          "name",
+          "run_id"
+        ],
+        "type": "object"
+      },
+      "RunRowDto": {
+        "description": "One row of the projection.",
+        "properties": {
+          "cards": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/RunCardCellDto"
+            },
+            "description": "Per Card of the request, keyed by `{ns}/{name}`: the Card's\njudgements of this run.",
+            "type": "object"
+          },
+          "content_hash": {
+            "description": "Hex sha256 of the stored run, in every state.",
+            "type": "string"
+          },
+          "ended_at": {
+            "description": "`ended_at`, when the run carried a parseable one.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error_kind": {
+            "description": "`error.kind`, when `status` is `error`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fingerprints": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "The run's facet fingerprints, hex, keyed by facet.",
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "metrics": {
+            "additionalProperties": {
+              "format": "double",
+              "type": "number"
+            },
+            "description": "The run's `metrics`, keyed by metric id.",
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "run_id": {
+            "description": "The run's id.",
+            "type": "string"
+          },
+          "started_at": {
+            "description": "`started_at`, when the run carried a parseable one.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RunStateDto"
+              }
+            ],
+            "description": "How the caller may see the run. The run's own columns below are\npresent exactly when it is not `deleted`."
+          },
+          "status": {
+            "description": "`ok`, `error` or `skipped`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "run_id",
+          "content_hash",
+          "state",
+          "cards"
+        ],
+        "type": "object"
+      },
+      "RunStateDto": {
+        "description": "How a row of the projection may be seen.",
+        "oneOf": [
+          {
+            "const": "live",
+            "description": "Neither archived nor deleted.",
+            "type": "string"
+          },
+          {
+            "const": "archived",
+            "description": "Archived; only members of the namespace see this state.",
+            "type": "string"
+          },
+          {
+            "const": "deleted",
+            "description": "Deleted, or, for a reader who is not a member, archived. Only\n`run_id`, `content_hash` and the Cards' judgements are shown.",
+            "type": "string"
+          }
+        ]
+      },
+      "RunWriteDto": {
+        "description": "One element of a batch response.",
+        "properties": {
+          "content_hash": {
+            "description": "Hex sha256 of the stored run.",
+            "type": "string"
+          },
+          "result": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RunWriteResult"
+              }
+            ],
+            "description": "What the write did to this run."
+          },
+          "run_id": {
+            "description": "The id the run is stored under.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "content_hash",
+          "result"
+        ],
+        "type": "object"
+      },
+      "RunWriteResult": {
+        "description": "What a write did to one run.",
+        "oneOf": [
+          {
+            "const": "created",
+            "description": "There was no run with this id; it was created.",
+            "type": "string"
+          },
+          {
+            "const": "updated",
+            "description": "A run with this id and other content was overwritten.",
+            "type": "string"
+          },
+          {
+            "const": "unchanged",
+            "description": "The run already had this content; nothing was written.",
+            "type": "string"
+          }
+        ]
+      },
+      "RunWrittenDto": {
+        "description": "Response of `PUT …/runs/{run_id}`.",
+        "properties": {
+          "content_hash": {
+            "description": "Hex sha256 of the stored run (`evalhub_core::run::run_content_hash`):\nthe body as sent, with the facets it omitted copied from the latest\nheader, in canonical form.",
+            "type": "string"
+          },
+          "result": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RunWriteResult"
+              }
+            ],
+            "description": "What the write did: `created` (`201`), `updated` or `unchanged`\n(both `200`)."
+          },
+          "run_id": {
+            "description": "The id the run is stored under.",
+            "type": "string"
+          },
+          "runs_hash": {
+            "description": "Hex `runs_hash` of the Eval after the write: the digest over every\nrun of the record, archived and deleted included.",
+            "type": "string"
+          },
+          "status": {
+            "description": "The run's `status`: `ok`, `error` or `skipped`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "content_hash",
+          "status",
+          "result",
+          "runs_hash"
+        ],
+        "type": "object"
+      },
+      "RunsByStatusDto": {
+        "description": "Runs of an Eval by `status`, over those neither archived nor deleted.",
+        "properties": {
+          "error": {
+            "description": "`status = error`.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "ok": {
+            "description": "`status = ok`.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "skipped": {
+            "description": "`status = skipped`.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "ok",
+          "error",
+          "skipped"
+        ],
+        "type": "object"
+      },
+      "RunsQuery": {
+        "description": "Query string of `GET …/runs`, as documented. The handler reads it with\n[`RunsParams`], because `cards` and `sort` repeat.",
+        "properties": {
+          "cards": {
+            "description": "`{ns}/{name}` of a Card whose judgements to join; repeat for\nseveral. Each must be visible to the caller and use this Eval, or\nthe answer is `404`.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "cursor": {
+            "description": "Cursor from a previous page's `next_cursor`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "include": {
+            "description": "`archived`, `deleted` or both, comma-separated: also list those\nruns. Honoured for members of the namespace only.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "limit": {
+            "description": "Page size, 1–200; default 50.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "sort": {
+            "description": "A sort key, `{path}`, `{path}:asc` or `{path}:desc`; repeat for\nseveral, most significant first. `run_id` is always the last key.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "where": {
+            "description": "The filter as JSON text, in the query grammar (`GET\n/schemas/query`) over the run paths: `run_id`, `status`,\n`error.kind`, `started_at`, `ended_at`, facet keys such as\n`model.id`, `fingerprint.{facet}`, `metrics[{ns}/{name}]`,\n`results[{card}][{metric}].value` / `.label`, and registered `ext`\nkeys.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "RunsSummaryDto": {
+        "description": "The `runs` block of an Eval's envelope (`GET /evals/{ns}/{name}[@…]`).\nThe runs belong to the record, so it is the same at every `@seq`.",
+        "properties": {
+          "archived": {
+            "description": "Archived runs that are not deleted. Members of the namespace only.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "by_status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RunsByStatusDto"
+              }
+            ],
+            "description": "`count` by `status`."
+          },
+          "count": {
+            "description": "Runs that are neither archived nor deleted.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "deleted": {
+            "description": "Deleted runs. Members of the namespace only.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "runs_hash": {
+            "description": "Hex `runs_hash`: the one digest over every run of the record,\narchived and deleted included, the same for every reader. It\nchanges when a run is added or overwritten, so a non-member learns\nthat some run changed and nothing else. `sha256(\"[]\")` when the\nEval never had a run.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "count",
+          "by_status",
+          "runs_hash"
+        ],
+        "type": "object"
+      },
       "ScopeDto": {
         "description": "A scope as it crosses the wire.",
         "oneOf": [
@@ -1933,6 +2579,24 @@ expression: body
             "description": "Hex sha256 of the canonical record.",
             "type": "string"
           },
+          "converted_from": {
+            "description": "On a `POST` of an `evalhub.eval/1.0` body: the schema the body\ndeclared. The stored version is the `evalhub.eval/2.0` header split\nfrom it, and `content_hash` is that header's. Accepted until 0.3.0.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "converted_runs": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConvertedRunsDto"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "On a `POST` of an `evalhub.eval/1.0` body: its `runs[]`, written as\nrun rows, reported as `POST …/runs:batch` reports runs."
+          },
           "created_at": {
             "description": "When the hub stored this version.",
             "format": "date-time",
@@ -1971,6 +2635,17 @@ expression: body
               "array",
               "null"
             ]
+          },
+          "runs": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunsSummaryDto"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "An Eval's runs, summarised, on `GET`. The runs belong to the\nrecord, so this is the same at every `@seq`."
           },
           "seq": {
             "description": "Sequence number within the name, from 1, gap-free.",
@@ -2079,15 +2754,22 @@ expression: body
         "description": "What a read removed from a record body because the reader may not see\nit. Present in an envelope only when something was removed.",
         "properties": {
           "relations": {
-            "description": "One entry per removed `relations[]` element, in body order.",
+            "description": "One entry per removed `relations[]` element, in body order. Empty\nwhen only `run_results[]` elements were removed.",
             "items": {
               "$ref": "#/components/schemas/WithheldRelation"
             },
             "type": "array"
+          },
+          "run_results": {
+            "description": "How many `run_results[]` elements were removed because they judge\nruns of an Eval the reader may not see. Only the number: which\nEval, which runs and what was judged stay hidden. `0` when none\nwere.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
           }
         },
         "required": [
-          "relations"
+          "relations",
+          "run_results"
         ],
         "type": "object"
       },
@@ -2166,7 +2848,17 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The body is larger than `limits.body_bytes`, or a batch carries more runs than `limits.batch_runs`."
           },
           "415": {
             "content": {
@@ -2214,7 +2906,7 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
           },
           "422": {
             "content": {
@@ -2250,7 +2942,7 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
           },
           "422": {
             "content": {
@@ -2298,7 +2990,7 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
           },
           "422": {
             "content": {
@@ -2381,7 +3073,7 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
           },
           "422": {
             "content": {
@@ -2483,7 +3175,7 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
           },
           "422": {
             "content": {
@@ -2552,7 +3244,17 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The body is larger than `limits.body_bytes`, or a batch carries more runs than `limits.batch_runs`."
           },
           "415": {
             "content": {
@@ -2655,7 +3357,17 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The body is larger than `limits.body_bytes`, or a batch carries more runs than `limits.batch_runs`."
           },
           "415": {
             "content": {
@@ -2745,7 +3457,7 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
           },
           "422": {
             "content": {
@@ -2761,7 +3473,7 @@ expression: body
         "summary": "Read Card version"
       },
       "post": {
-        "description": "Validates the body, canonicalises it and stores it as the next version of `{ns}/{name}`, creating the name if needed. Requires a token with `write` on `ns`. If the canonical body equals the latest version's, that version is returned with `200` and nothing is written.",
+        "description": "Validates the body, canonicalises it and stores it as the next version of `{ns}/{name}`, creating the name if needed. Requires a token with `write` on `ns`. If the canonical body equals the latest version's, that version is returned with `200` and nothing is written. An `evalhub.eval/2.0` body carrying `runs` is `422 runs_moved`: runs are written with `PUT …/runs/{run_id}` or `POST …/runs:batch`. An `evalhub.eval/1.0` body is still accepted until 0.3.0: it is stored as a 2.0 header plus run rows, and the response carries a `Deprecation` header, `converted_from` and `converted_runs`. A Card with more `run_results` than `limits.run_results` is `422 too_many_run_results`.",
         "operationId": "post_card",
         "parameters": [
           {
@@ -2853,7 +3565,17 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The body is larger than `limits.body_bytes`, or a batch carries more runs than `limits.batch_runs`."
           },
           "415": {
             "content": {
@@ -2936,7 +3658,7 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
           },
           "422": {
             "content": {
@@ -3029,7 +3751,17 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The body is larger than `limits.body_bytes`, or a batch carries more runs than `limits.batch_runs`."
           },
           "415": {
             "content": {
@@ -3153,7 +3885,7 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
           },
           "422": {
             "content": {
@@ -3234,7 +3966,17 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The body is larger than `limits.body_bytes`, or a batch carries more runs than `limits.batch_runs`."
           },
           "415": {
             "content": {
@@ -3337,7 +4079,17 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The body is larger than `limits.body_bytes`, or a batch carries more runs than `limits.batch_runs`."
           },
           "415": {
             "content": {
@@ -3419,7 +4171,7 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
           },
           "422": {
             "content": {
@@ -3521,7 +4273,7 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
           },
           "422": {
             "content": {
@@ -3590,7 +4342,17 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The body is larger than `limits.body_bytes`, or a batch carries more runs than `limits.batch_runs`."
           },
           "415": {
             "content": {
@@ -3693,7 +4455,17 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The body is larger than `limits.body_bytes`, or a batch carries more runs than `limits.batch_runs`."
           },
           "415": {
             "content": {
@@ -3783,7 +4555,7 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
           },
           "422": {
             "content": {
@@ -3799,7 +4571,7 @@ expression: body
         "summary": "Read Eval version"
       },
       "post": {
-        "description": "Validates the body, canonicalises it and stores it as the next version of `{ns}/{name}`, creating the name if needed. Requires a token with `write` on `ns`. If the canonical body equals the latest version's, that version is returned with `200` and nothing is written.",
+        "description": "Validates the body, canonicalises it and stores it as the next version of `{ns}/{name}`, creating the name if needed. Requires a token with `write` on `ns`. If the canonical body equals the latest version's, that version is returned with `200` and nothing is written. An `evalhub.eval/2.0` body carrying `runs` is `422 runs_moved`: runs are written with `PUT …/runs/{run_id}` or `POST …/runs:batch`. An `evalhub.eval/1.0` body is still accepted until 0.3.0: it is stored as a 2.0 header plus run rows, and the response carries a `Deprecation` header, `converted_from` and `converted_runs`. A Card with more `run_results` than `limits.run_results` is `422 too_many_run_results`.",
         "operationId": "post_eval",
         "parameters": [
           {
@@ -3891,7 +4663,17 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The body is larger than `limits.body_bytes`, or a batch carries more runs than `limits.batch_runs`."
           },
           "415": {
             "content": {
@@ -3919,7 +4701,7 @@ expression: body
     },
     "/api/v1/evals/{ns}/{name}/cards": {
       "get": {
-        "description": "Every visible Card whose latest live version has a `core/uses_eval` edge to this Eval version, with its per-facet fingerprints and whether its harness and model match the Eval's. `group_by=fingerprint.{facet}` groups them by that fingerprint. The hub lines the Cards up; it does not rank them.",
+        "description": "Every visible Card whose latest live version has a `core/uses_eval` edge to this Eval version, with its per-facet fingerprints, whether its harness and model match those of every run it used, and its used set: `runs_used`, `used_set_hash` and `changed_since_card`. `group_by=fingerprint.{facet}` groups them by that fingerprint. The hub lines the Cards up; it does not rank them.",
         "operationId": "eval_cards",
         "parameters": [
           {
@@ -3983,7 +4765,7 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
           },
           "422": {
             "content": {
@@ -4056,7 +4838,7 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
           },
           "422": {
             "content": {
@@ -4149,7 +4931,17 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The body is larger than `limits.body_bytes`, or a batch carries more runs than `limits.batch_runs`."
           },
           "415": {
             "content": {
@@ -4273,7 +5065,7 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
           },
           "422": {
             "content": {
@@ -4354,7 +5146,17 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The body is larger than `limits.body_bytes`, or a batch carries more runs than `limits.batch_runs`."
           },
           "415": {
             "content": {
@@ -4378,6 +5180,715 @@ expression: body
           }
         },
         "summary": "Add an edge"
+      }
+    },
+    "/api/v1/evals/{ns}/{name}/runs": {
+      "get": {
+        "description": "One page of the Eval's runs: status, error kind, times, metrics and fingerprints, and for each Card named in `cards=` its judgements of each run and its used set (`runs_used`, `used_set_hash`, `changed_since_card`). `where` is the query grammar as JSON text over the run paths; `sort` is `{path}[:asc|:desc]`, repeatable. Archived and deleted runs are left out unless a member asks with `include=archived,deleted`. A Card that is unknown, invisible or does not use this Eval is `404`, as is a private Eval.",
+        "operationId": "list_runs",
+        "parameters": [
+          {
+            "description": "Name of the Eval. No `@{seq}`: runs belong to the record, not to a\nversion.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Name of the Eval. No `@{seq}`: runs belong to the record, not to a\nversion.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "Namespace of the Eval: a user login or an organisation slug.",
+            "in": "path",
+            "name": "ns",
+            "required": true,
+            "schema": {
+              "description": "Namespace of the Eval: a user login or an organisation slug.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "`{ns}/{name}` of a Card whose judgements to join; repeat for\nseveral. Each must be visible to the caller and use this Eval, or\nthe answer is `404`.",
+            "in": "query",
+            "name": "cards",
+            "schema": {
+              "description": "`{ns}/{name}` of a Card whose judgements to join; repeat for\nseveral. Each must be visible to the caller and use this Eval, or\nthe answer is `404`.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Cursor from a previous page's `next_cursor`.",
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "description": "Cursor from a previous page's `next_cursor`.",
+              "type": "string"
+            },
+            "style": "form"
+          },
+          {
+            "description": "`archived`, `deleted` or both, comma-separated: also list those\nruns. Honoured for members of the namespace only.",
+            "in": "query",
+            "name": "include",
+            "schema": {
+              "description": "`archived`, `deleted` or both, comma-separated: also list those\nruns. Honoured for members of the namespace only.",
+              "type": "string"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Page size, 1–200; default 50.",
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "description": "Page size, 1–200; default 50.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "style": "form"
+          },
+          {
+            "description": "A sort key, `{path}`, `{path}:asc` or `{path}:desc`; repeat for\nseveral, most significant first. `run_id` is always the last key.",
+            "in": "query",
+            "name": "sort",
+            "schema": {
+              "description": "A sort key, `{path}`, `{path}:asc` or `{path}:desc`; repeat for\nseveral, most significant first. `run_id` is always the last key.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "style": "form"
+          },
+          {
+            "description": "The filter as JSON text, in the query grammar (`GET\n/schemas/query`) over the run paths: `run_id`, `status`,\n`error.kind`, `started_at`, `ended_at`, facet keys such as\n`model.id`, `fingerprint.{facet}`, `metrics[{ns}/{name}]`,\n`results[{card}][{metric}].value` / `.label`, and registered `ext`\nkeys.",
+            "in": "query",
+            "name": "where",
+            "schema": {
+              "description": "The filter as JSON text, in the query grammar (`GET\n/schemas/query`) over the run paths: `run_id`, `status`,\n`error.kind`, `started_at`, `ended_at`, facet keys such as\n`model.id`, `fingerprint.{facet}`, `metrics[{ns}/{name}]`,\n`results[{card}][{metric}].value` / `.label`, and registered `ext`\nkeys.",
+              "type": "string"
+            },
+            "style": "form"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunPageDto"
+                }
+              }
+            },
+            "description": "One page of the run projection."
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "The runs of an Eval, with Cards' judgements"
+      }
+    },
+    "/api/v1/evals/{ns}/{name}/runs/{run_id}": {
+      "delete": {
+        "description": "Tombstones the run with `{ reason, note }`: the body and its attachment references go, the run id, content hash and metrics stay, and the id is never written again. Deleting twice is `409 run_deleted`.",
+        "operationId": "delete_run",
+        "parameters": [
+          {
+            "description": "Name of the Eval. No `@{seq}`: runs belong to the record, not to a\nversion.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Name of the Eval. No `@{seq}`: runs belong to the record, not to a\nversion.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "Namespace of the Eval: a user login or an organisation slug.",
+            "in": "path",
+            "name": "ns",
+            "required": true,
+            "schema": {
+              "description": "Namespace of the Eval: a user login or an organisation slug.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "The run's id within the Eval: non-empty, no `/`, at most 200 bytes.",
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "description": "The run's id within the Eval: non-empty, no `/`, at most 200 bytes.",
+              "type": "string"
+            },
+            "style": "simple"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TombstoneBody"
+              }
+            }
+          },
+          "description": "Body of `DELETE …/{name}@{seq}`.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunEnvelope"
+                }
+              }
+            },
+            "description": "A run as read back.\n\nA deleted run is `{ run_id, content_hash, tombstone }` and nothing\nelse, as a tombstoned version keeps its commitment and loses its body."
+          },
+          "400": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Failed to parse the request body as JSON"
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The body is larger than `limits.body_bytes`, or a batch carries more runs than `limits.batch_runs`."
+          },
+          "415": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Expected request with `Content-Type: application/json`"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Delete a run"
+      },
+      "get": {
+        "description": "The stored run. An archived run is `404` to anyone who is not a member of the namespace; a deleted run is `{ run_id, content_hash, tombstone }`.",
+        "operationId": "get_run",
+        "parameters": [
+          {
+            "description": "Name of the Eval. No `@{seq}`: runs belong to the record, not to a\nversion.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Name of the Eval. No `@{seq}`: runs belong to the record, not to a\nversion.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "Namespace of the Eval: a user login or an organisation slug.",
+            "in": "path",
+            "name": "ns",
+            "required": true,
+            "schema": {
+              "description": "Namespace of the Eval: a user login or an organisation slug.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "The run's id within the Eval: non-empty, no `/`, at most 200 bytes.",
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "description": "The run's id within the Eval: non-empty, no `/`, at most 200 bytes.",
+              "type": "string"
+            },
+            "style": "simple"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunEnvelope"
+                }
+              }
+            },
+            "description": "A run as read back.\n\nA deleted run is `{ run_id, content_hash, tombstone }` and nothing\nelse, as a tombstoned version keeps its commitment and loses its body."
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Read one run"
+      },
+      "patch": {
+        "description": "`{ archived }`. An archived run is kept whole and counted in `runs_hash`, and hidden from everyone but members. No hash changes.",
+        "operationId": "patch_run",
+        "parameters": [
+          {
+            "description": "Name of the Eval. No `@{seq}`: runs belong to the record, not to a\nversion.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Name of the Eval. No `@{seq}`: runs belong to the record, not to a\nversion.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "Namespace of the Eval: a user login or an organisation slug.",
+            "in": "path",
+            "name": "ns",
+            "required": true,
+            "schema": {
+              "description": "Namespace of the Eval: a user login or an organisation slug.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "The run's id within the Eval: non-empty, no `/`, at most 200 bytes.",
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "description": "The run's id within the Eval: non-empty, no `/`, at most 200 bytes.",
+              "type": "string"
+            },
+            "style": "simple"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArchiveBody"
+              }
+            }
+          },
+          "description": "Body of `PATCH …/runs/{run_id}`.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunEnvelope"
+                }
+              }
+            },
+            "description": "A run as read back.\n\nA deleted run is `{ run_id, content_hash, tombstone }` and nothing\nelse, as a tombstoned version keeps its commitment and loses its body."
+          },
+          "400": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Failed to parse the request body as JSON"
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The body is larger than `limits.body_bytes`, or a batch carries more runs than `limits.batch_runs`."
+          },
+          "415": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Expected request with `Content-Type: application/json`"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Archive or unarchive a run"
+      },
+      "put": {
+        "description": "Creates (`201`) or overwrites (`200`, `result: updated`) the run; identical content is `200` with `result: unchanged` and writes nothing. Facets the run omits are copied from the latest header. The body's `run_id` must equal the path's (`run_id_mismatch`). A deleted run id is `409 run_deleted`; an attachment not uploaded and confirmed is `409 attachment_missing`. Needs `write` on `ns`.",
+        "operationId": "put_run",
+        "parameters": [
+          {
+            "description": "Name of the Eval. No `@{seq}`: runs belong to the record, not to a\nversion.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Name of the Eval. No `@{seq}`: runs belong to the record, not to a\nversion.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "Namespace of the Eval: a user login or an organisation slug.",
+            "in": "path",
+            "name": "ns",
+            "required": true,
+            "schema": {
+              "description": "Namespace of the Eval: a user login or an organisation slug.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "The run's id within the Eval: non-empty, no `/`, at most 200 bytes.",
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "description": "The run's id within the Eval: non-empty, no `/`, at most 200 bytes.",
+              "type": "string"
+            },
+            "style": "simple"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": true
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunWrittenDto"
+                }
+              }
+            },
+            "description": "The run was overwritten, or already had this content."
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunWrittenDto"
+                }
+              }
+            },
+            "description": "The run was created."
+          },
+          "400": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Failed to parse the request body as JSON"
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The body is larger than `limits.body_bytes`, or a batch carries more runs than `limits.batch_runs`."
+          },
+          "415": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Expected request with `Content-Type: application/json`"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Write one run"
+      }
+    },
+    "/api/v1/evals/{ns}/{name}/runs:batch": {
+      "post": {
+        "description": "`{ runs: [Run, …] }`, each carrying its own `run_id`. Every element is checked as by `PUT …/runs/{run_id}`, in one transaction: if any fails, nothing is written and every failing element is listed, its entries' paths prefixed with `/runs/{index}` (`422`, or `409` when every entry is `run_deleted` / `attachment_missing`). More than `limits.batch_runs` runs is `413 batch_too_large`.",
+        "operationId": "batch_runs",
+        "parameters": [
+          {
+            "description": "Name of the Eval. No `@{seq}`: runs belong to the record, not to a\nversion.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Name of the Eval. No `@{seq}`: runs belong to the record, not to a\nversion.",
+              "type": "string"
+            },
+            "style": "simple"
+          },
+          {
+            "description": "Namespace of the Eval: a user login or an organisation slug.",
+            "in": "path",
+            "name": "ns",
+            "required": true,
+            "schema": {
+              "description": "Namespace of the Eval: a user login or an organisation slug.",
+              "type": "string"
+            },
+            "style": "simple"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchBody"
+              }
+            }
+          },
+          "description": "Body of `POST …/runs:batch`.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchResponse"
+                }
+              }
+            },
+            "description": "Response of `POST …/runs:batch`."
+          },
+          "400": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Failed to parse the request body as JSON"
+          },
+          "401": {
+            "description": "No token, or an unrecognised one."
+          },
+          "403": {
+            "description": "The token lacks the scope or namespace."
+          },
+          "404": {
+            "description": "Not found, or private to a namespace the caller cannot see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The body is larger than `limits.body_bytes`, or a batch carries more runs than `limits.batch_runs`."
+          },
+          "415": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Expected request with `Content-Type: application/json`"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The record is invalid; every violation is listed."
+          }
+        },
+        "summary": "Write several runs, all or nothing"
       }
     },
     "/api/v1/evals/{ns}/{name}/settings": {
@@ -4457,7 +5968,17 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The body is larger than `limits.body_bytes`, or a batch carries more runs than `limits.batch_runs`."
           },
           "415": {
             "content": {
@@ -4539,7 +6060,7 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
           },
           "422": {
             "content": {
@@ -4606,7 +6127,7 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
           },
           "422": {
             "content": {
@@ -4665,7 +6186,17 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The body is larger than `limits.body_bytes`, or a batch carries more runs than `limits.batch_runs`."
           },
           "415": {
             "content": {
@@ -4723,7 +6254,7 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
           },
           "422": {
             "content": {
@@ -4780,7 +6311,17 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The body is larger than `limits.body_bytes`, or a batch carries more runs than `limits.batch_runs`."
           },
           "415": {
             "content": {
@@ -4828,7 +6369,7 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
           },
           "422": {
             "content": {
@@ -4923,7 +6464,7 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
           },
           "422": {
             "content": {
@@ -5006,7 +6547,7 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
           },
           "422": {
             "content": {
@@ -5095,7 +6636,17 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The body is larger than `limits.body_bytes`, or a batch carries more runs than `limits.batch_runs`."
           },
           "415": {
             "content": {
@@ -5146,7 +6697,7 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
           },
           "422": {
             "content": {
@@ -5213,7 +6764,17 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The body is larger than `limits.body_bytes`, or a batch carries more runs than `limits.batch_runs`."
           },
           "415": {
             "content": {
@@ -5271,7 +6832,7 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
           },
           "422": {
             "content": {
@@ -5328,7 +6889,17 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The body is larger than `limits.body_bytes`, or a batch carries more runs than `limits.batch_runs`."
           },
           "415": {
             "content": {
@@ -5376,7 +6947,7 @@ expression: body
                 }
               }
             },
-            "description": "State conflict: an attachment is not ready, or the label is taken."
+            "description": "State conflict: an attachment is not ready, the label is taken, or the run was deleted."
           },
           "422": {
             "content": {

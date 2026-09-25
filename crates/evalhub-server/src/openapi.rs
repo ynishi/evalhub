@@ -7,10 +7,11 @@
 //! The non-derivable parts (`info`, `servers`, the bearer security scheme,
 //! the shared error responses) come from `evalhub_schema::openapi`.
 //!
-//! `GET /schemas/{name}` serves the committed JSON Schema files
-//! (`card`, `eval`, `query`, `error`, and the seven facets) with `$id` set
-//! to that URL, so a `$ref` from `openapi.json` resolves to the same bytes
-//! a client would fetch directly.
+//! `GET /schemas/{name}` serves the generated JSON Schemas
+//! (`evalhub_schema::SCHEMA_NAMES`: `card`, `eval` (the 1.0 Eval, accepted
+//! until 0.3.0), `eval-2` (the Eval header), `run`, `error`, `query`) with
+//! `$id` set to that URL, so a `$ref` from `openapi.json` resolves to the
+//! same bytes a client would fetch directly.
 //!
 //! The assembled document is snapshot-tested. A handler change that
 //! alters it fails the test until the snapshot is updated in the same

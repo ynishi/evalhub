@@ -60,13 +60,24 @@ Configuration is layered: defaults, then a TOML file (`--config` or
 `EVALHUB_DATABASE__URL`), then flags. `config show --origin` prints every
 key with the layer that set it; secrets are redacted.
 
+What one request may carry is configured under `limits`; a request over a
+limit is refused, never truncated:
+
+| Key                  | Default             | Over it                          |
+| -------------------- | ------------------- | -------------------------------- |
+| `limits.body_bytes`  | `16777216` (16 MiB) | `413 body_too_large`, any endpoint |
+| `limits.batch_runs`  | `1000`              | `413 batch_too_large` on `runs:batch` |
+| `limits.run_results` | `100000`            | `422 too_many_run_results` on a Card |
+
 `serve` refuses to start without a database, and with one it refuses to
 start until `evalhub migrate` has brought the schema current.
 
 ## API
 
 Everything is under `/api/v1`; the contract is `GET /openapi.json` (OpenAPI
-3.1) and the record schemas are `GET /schemas/{card|eval|error|query}`.
+3.1) and the record schemas are `GET /schemas/{card|eval-2|run|eval|error|query}`
+(`eval-2` is the Eval header, `run` one run, `eval` the 0.1.x Eval that
+0.2.0 still accepts).
 Writes need `Authorization: Bearer <token>` with `write` on the namespace;
 reads of public records need nothing, and private records are `404` to
 anyone the token does not cover. A token acts only in the namespaces it
@@ -79,13 +90,35 @@ covers it.
 
 | Method   | Path                                            | Does                                                                                     |
 | -------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `POST`   | `/{cards\|evals}/{ns}/{name}?label=`            | Validate, canonicalise and append a version. `201` with `{ id, version_id, seq, label, content_hash, created_at, changed[], badges[] }`; `200` and the existing version when the canonical body equals the latest; `422 { errors[] }` with every violation; `409 attachment_missing` or `label_in_use`. |
-| `GET`    | `/{cards\|evals}/{ns}/{name}[@{seq}\|@{label}]` | The latest live version, or one addressed by sequence number or label, with the canonical `record`. `?expand=fingerprints,badges,changed` adds the hub's derived facts. A tombstoned version comes back with `tombstone` and no `record`. |
+| `POST`   | `/{cards\|evals}/{ns}/{name}?label=`            | Validate, canonicalise and append a version. `201` with `{ id, version_id, seq, label, content_hash, created_at, changed[], badges[] }`; `200` and the existing version when the canonical body equals the latest; `422 { errors[] }` with every violation; `409 attachment_missing` or `label_in_use`. An Eval header carrying `runs` is `422 runs_moved` (runs are written below); a Card with more `run_results` than `limits.run_results` is `422 too_many_run_results`. |
+| `GET`    | `/{cards\|evals}/{ns}/{name}[@{seq}\|@{label}]` | The latest live version, or one addressed by sequence number or label, with the canonical `record`. `?expand=fingerprints,badges,changed` adds the hub's derived facts. A tombstoned version comes back with `tombstone` and no `record`. An Eval also carries `runs: { count, by_status, archived, deleted, runs_hash }` (the same at every `@seq`; `archived` / `deleted` for members of the namespace only). Card judgements of an Eval the reader may not see are removed and counted in `withheld.run_results`. |
 | `GET`    | `/{cards\|evals}/{ns}/{name}/versions`          | Every version, oldest first, tombstones included, without bodies.                          |
 | `PATCH`  | `/{cards\|evals}/{ns}/{name}@{seq}/label`       | Point a label at that version. Labels are unique within the name and never purely numeric. |
 | `PATCH`  | `/{cards\|evals}/{ns}/{name}/settings`          | `{ "visibility": "public" \| "private" }`.                                                 |
 | `DELETE` | `/{cards\|evals}/{ns}/{name}@{seq}`             | Tombstone with `{ "reason": "withdrawn\|duplicate\|takedown\|other", "note": … }`. The body goes; the version id, the content hash and `changed[]` stay. |
 | `GET`    | `/{cards\|evals}?ns&search&sort&cursor&limit`   | Page over names with a live version. `sort` is `created_desc` (default), `created_asc` or `name_asc`; paging is by opaque cursor. |
+
+**The `evalhub.eval/1.0` body is deprecated.** 0.2.0 still accepts a
+0.1.x Eval body (header and `runs[]` in one) on `POST /evals/{ns}/{name}`:
+it is stored as a 2.0 header plus run rows, and the response carries a
+`Deprecation` header, `converted_from: "evalhub.eval/1.0"` and
+`converted_runs`. **0.3.0 removes this**; post the header, then the runs.
+
+### Runs
+
+An Eval's runs are rows of the Eval, not versions: written by `run_id`,
+overwritten in place, archived and deleted without appending a header
+version. They follow the Eval's visibility; every route below is `404`
+for an Eval the caller may not see. Writes need `write` on the namespace.
+
+| Method   | Path                                           | Does                                                                                     |
+| -------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `PUT`    | `/evals/{ns}/{name}/runs/{run_id}`             | Write one run (`GET /schemas/run`; its `run_id` must equal the path's). `201` created, `200` with `result: updated` or `unchanged`; body `{ run_id, content_hash, status, result, runs_hash }`. `409 run_deleted` for a deleted id, `409 attachment_missing`, `422` otherwise. |
+| `POST`   | `/evals/{ns}/{name}/runs:batch`                | `{ runs: [Run, …] }`, all or nothing: on failure nothing is written and every failing element is listed (`/runs/{index}/…`). `200 { runs: [{ run_id, content_hash, result }], runs_hash }`. More than `limits.batch_runs` is `413 batch_too_large`. |
+| `GET`    | `/evals/{ns}/{name}/runs?cards&where&sort&limit&cursor&include` | Runs × metrics × each named Card's judgements. `cards={ns}/{name}` repeats; `where` is the query grammar as JSON text over run paths (`status`, `error.kind`, `model.id`, `metrics[{id}]`, `results[{card}][{metric}].value`, …); `sort={path}[:asc\|:desc]` repeats; `limit` 1–200; `include=archived,deleted` for members. Per Card: `runs_used`, `used_set_hash`, `changed_since_card`. A Card that is unknown, private to the caller or not using the Eval is `404`. |
+| `GET`    | `/evals/{ns}/{name}/runs/{run_id}`             | One run. Archived runs are `404` to non-members; a deleted run is `{ run_id, content_hash, tombstone }`. |
+| `PATCH`  | `/evals/{ns}/{name}/runs/{run_id}`             | `{ "archived": true \| false }`. Hides a run from non-members and the counts; no hash changes. |
+| `DELETE` | `/evals/{ns}/{name}/runs/{run_id}`             | Tombstone with `{ "reason", "note" }`. The body and attachment references go; the id, content hash and metrics stay, and the id is never written again. |
 
 ### Identity
 
@@ -122,7 +155,7 @@ exists, `harness_registered` and `metric_registered`); there is no
 | `HEAD`   | `/attachments/{sha256}`                           | Size and media type, same authorisation.                                    |
 | `POST`   | `/{cards\|evals}/{ns}/{name}@{seq}/relations`     | Add an edge: `{ type, to, attrs }`, where `to` is `{ns}/{name}@{seq}`, `external:<url>` or `hf:<repo>@<sha>`. |
 | `GET`    | `/{cards\|evals}/{ns}/{name}[@…]/relations`       | Walk the graph: `direction=out\|in\|both`, `depth=1..5`, `types=`, `follow_latest=`. Returns `{ nodes, edges }`. |
-| `GET`    | `/evals/{ns}/{name}[@…]/cards`                    | The comparison view: Cards measured on this Eval, with their fingerprints and `same_harness` / `same_model`. `group_by=fingerprint.{facet}` groups them. |
+| `GET`    | `/evals/{ns}/{name}[@…]/cards`                    | The comparison view: Cards measured on this Eval, with their fingerprints, `same_harness` / `same_model` (against every run each Card used), `runs_used`, `used_set_hash` and `changed_since_card`. `group_by=fingerprint.{facet}` groups them. |
 
 The hub never carries attachment bytes: uploads and downloads are
 presigned URLs straight to the object store, and the hub records only the

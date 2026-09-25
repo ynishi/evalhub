@@ -10,12 +10,29 @@
 //! searched, listed and traversed by their relations to each other. There
 //! are two kinds of thing:
 //!
-//! - A **Card** — what was measured, how, and what the score was.
-//! - An **Eval** — the material: a set of runs, prompts, tasks or traces.
+//! - A **Card** — what was measured, how, and what the score was, and,
+//!   run by run, what its grader judged (`run_results`).
+//! - An **Eval** — the material: a header (what was run, on what) and its
+//!   **runs**, one row per execution with its conditions, files and
+//!   measurements (`metrics`).
 //!
 //! Both are *typed records*: a JSON document that closes over a JSON Schema,
 //! plus references to attached files. Under a name, versions accumulate;
-//! each version is immutable; a correction is a new version.
+//! each version is immutable; a correction is a new version. The one
+//! exception is not reachable by a request: `evalhub migrate` for release
+//! 0.2.0 rewrites every stored `evalhub.eval/1.0` body into its 2.0 header
+//! once, recomputing its `content_hash` and auditing both hashes
+//! (`migration.runs_split`; `evalhub_store`'s crate doc, "A version is
+//! write-once").
+//!
+//! An Eval's runs are not versions. They belong to the record: written
+//! under a producer-chosen `run_id` one by one or in a batch,
+//! overwritten in place, archived, deleted, none of which appends a
+//! header version. What keeps them verifiable is hashing, not immutability:
+//! each run has a `content_hash`, the record has one `runs_hash` over
+//! all of them, and a Card records the hashes of the runs it judged, so a
+//! run overwritten since shows up in the Card's `changed_since_card`
+//! ([`api::runs`]).
 //!
 //! # What evalhub is not
 //!
@@ -34,8 +51,8 @@
 //!           │  HTTPS, Bearer token
 //!           ▼
 //!   ┌───────────────────────── evalhub-server ─────────────────────────┐
-//!   │ api::records  api::attachments  api::query  api::relations       │
-//!   │ api::registry api::export       api::audit  api::auth            │
+//!   │ api::records  api::runs  api::attachments  api::query            │
+//!   │ api::relations  api::registry  api::export  api::audit  api::auth│
 //!   │ auth (tokens, orgs, visibility)   openapi (aide)   embed (SPA)    │
 //!   │ jobs (index build, badge recompute, GC)                          │
 //!   └───┬──────────────────┬──────────────────────────────┬────────────┘
@@ -58,7 +75,8 @@
 //! | Namespace      | `ns` (slug)                          | a user or an org; owns Cards, Evals and registry entries                |
 //! | Token          | `token_id`                           | user-owned; `scope` × `namespaces[]`                                    |
 //! | Card / Eval    | `type` + `{ns}/{name}` + `id` (ULID) | a named sequence of versions; setting: `visibility`                     |
-//! | Version        | `version_id` (ULID), `(id, seq)`     | immutable record; `content_hash` for idempotency; optional `label`      |
+//! | Version        | `version_id` (ULID), `(id, seq)`     | immutable record (one audited migration aside, above); `content_hash` for idempotency; optional `label` |
+//! | Run            | `(Eval id, run_id)`                  | one execution of an Eval; overwritable, archivable, deletable; `content_hash`, `runs_hash` |
 //! | Attachment     | `sha256`                             | an object in storage, referenced from `attachments[]`, deduplicated     |
 //! | Relation       | `(from_version_id, type, to, attrs)` | an edge; from `relations[]` on ingest or added via the API              |
 //! | Registry entry | `kind/{ns}/{id}@{version}`           | harness / metric / relation_type / ext_schema definition; immutable     |
@@ -90,6 +108,31 @@
 //! the same for `/evals`. Private records are `404` to anyone without
 //! access; there is no endpoint that reveals their existence.
 //!
+//! # Lifecycle of a run
+//!
+//! ```text
+//! POST /evals/{ns}/{name}                  the header (evalhub.eval/2.0, no `runs`)
+//! PUT  /evals/{ns}/{name}/runs/{run_id}    one run → 201 / 200 { run_id, content_hash, status, result, runs_hash }
+//! POST /evals/{ns}/{name}/runs:batch       many, all or nothing
+//! POST /cards/{ns}/{name}                  a Card with core/uses_eval + run_results[] over those runs
+//! GET  /evals/{ns}/{name}/runs?cards=…     run × metrics × each Card's judgement, changed_since_card
+//! ```
+//!
+//! Every run route follows the Eval's visibility (`404` for an Eval the
+//! caller may not see). A 2.0 header carrying `runs` is `422 runs_moved`;
+//! a 0.1.x `evalhub.eval/1.0` body (header and `runs[]` in one) is still
+//! accepted in 0.2.0 with a `Deprecation` header and converted into a
+//! header and run rows, and **0.3.0 removes this**. See [`api::runs`] and
+//! [`api::records`].
+//!
+//! # Limits
+//!
+//! A request body is at most `limits.body_bytes` (16 MiB), a batch at most
+//! `limits.batch_runs` runs (1,000), both `413` with the error envelope; a
+//! Card version at most `limits.run_results` judgements (100,000), `422
+//! too_many_run_results`. Read pages are 1–200. Limits refuse, never
+//! truncate. See [`config`].
+//!
 //! # Versions, labels, tombstones
 //!
 //! `seq` is assigned by the hub, gap-free per name. A `label` is a
@@ -103,7 +146,9 @@
 //! Seven facets (model, task, harness, generation, trial, grading, env),
 //! each fingerprinted. Two Cards pointing at the same Eval version are
 //! shown side by side, labelled `same_harness` / `same_model` where the
-//! fingerprints agree. That is the extent of the hub's opinion.
+//! Card's fingerprints agree with every run it used, with how many runs it
+//! used and which of them changed since. That is the extent of the hub's
+//! opinion.
 //!
 //! # Auth and visibility
 //!

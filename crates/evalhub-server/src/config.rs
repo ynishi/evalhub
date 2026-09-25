@@ -35,8 +35,20 @@
 //! auth.cookie_key =                            secret, private-cookie key for the UI session; random per process if unset, which ends every session on restart
 //! attachments.hash_verify_max_bytes = 268435456
 //! jobs.gc_grace_secs = 86400
+//! limits.body_bytes  = 16777216                 request body, every endpoint; above it 413 body_too_large
+//! limits.batch_runs  = 1000                     runs in one POST …/runs:batch; above it 413 batch_too_large
+//! limits.run_results = 100000                   run_results[] in one Card version; above it 422 too_many_run_results
 //! log.format      = "text" | "json"
 //! ```
+//!
+//! The `limits.*` keys bound what one request may carry. Before 0.2.0 the
+//! only cap was axum's default of 2 MiB on a buffered body; runs and
+//! per-run judgements made bodies larger, so the cap is now explicit and
+//! raised. A limit is refused, never truncated: the hub does not split a
+//! batch or a Card on the producer's behalf, because a half-written set of
+//! runs, or a Card judging part of what it claims to judge, would be a
+//! different claim from the one sent. Read pages are not configured here;
+//! they are 1–200 on every listing.
 //!
 //! Secrets are held in `secrecy::SecretString`, never printed by `Debug`,
 //! and shown as `[redacted]` by `config show`; their *origin* is still
@@ -69,6 +81,8 @@ pub struct Config {
     pub attachments: Attachments,
     /// Background jobs.
     pub jobs: Jobs,
+    /// What one request may carry.
+    pub limits: Limits,
     /// Logging.
     pub log: Log,
 }
@@ -135,6 +149,23 @@ pub struct Jobs {
     pub gc_grace_secs: u64,
 }
 
+/// `limits.*`: the size of what one request may carry. See the module
+/// doc for why each is refused rather than truncated.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Limits {
+    /// Largest request body, in bytes, on every endpoint. Enforced by the
+    /// router's `DefaultBodyLimit` on every buffered body; a larger one is
+    /// `413 body_too_large`.
+    pub body_bytes: usize,
+    /// Most runs in one `POST /evals/{ns}/{name}/runs:batch`; more is
+    /// `413 batch_too_large`, before anything is checked or written.
+    pub batch_runs: usize,
+    /// Most `run_results[]` elements in one Card version; more is
+    /// `422 too_many_run_results`, before the store is called.
+    pub run_results: usize,
+}
+
 /// `log.*`
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -162,6 +193,7 @@ impl Default for Config {
             auth: Auth::default(),
             attachments: Attachments::default(),
             jobs: Jobs::default(),
+            limits: Limits::default(),
             log: Log::default(),
         }
     }
@@ -204,6 +236,16 @@ impl Default for Jobs {
     fn default() -> Self {
         Self {
             gc_grace_secs: 24 * 60 * 60,
+        }
+    }
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self {
+            body_bytes: 16 * 1024 * 1024,
+            batch_runs: 1_000,
+            run_results: 100_000,
         }
     }
 }
@@ -346,6 +388,9 @@ impl Loaded {
                 c.attachments.hash_verify_max_bytes.to_string(),
             ),
             ("jobs.gc_grace_secs", c.jobs.gc_grace_secs.to_string()),
+            ("limits.body_bytes", c.limits.body_bytes.to_string()),
+            ("limits.batch_runs", c.limits.batch_runs.to_string()),
+            ("limits.run_results", c.limits.run_results.to_string()),
             (
                 "log.format",
                 match c.log.format {

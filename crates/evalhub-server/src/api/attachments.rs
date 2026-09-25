@@ -2,9 +2,9 @@
 //!
 //! The two-step upload and the `ready` gate are described in
 //! `evalhub_store::objects`. `GET /attachments/{sha256}` answers `302` to a
-//! presigned URL and is authorised against the records that reference the
-//! object: if any referencing record is public, anyone may download; else
-//! the caller needs access to at least one of them.
+//! presigned URL and is authorised against the records and runs that
+//! reference the object: if any reference is readable by everyone, anyone
+//! may download; else the caller needs access to at least one of them.
 //!
 //! ```text
 //! POST /attachments {sha256,size,media_type}
@@ -26,11 +26,21 @@
 //!
 //! # Who may download
 //!
+//! A reference is a version's `attachments[]` entry or a run's
+//! (`evalhub_store::objects::referencing`). A run's reference counts as
+//! its Eval's, with two exceptions that mirror who may read the run
+//! itself: a reference from an *archived* run counts only for a member of
+//! the Eval's namespace, whatever the Eval's visibility, because an
+//! archived run is hidden from everyone else; a *deleted* run has no
+//! references at all (its rows went with the tombstone), so it grants
+//! nothing. A run of an Eval with no live header is not returned either.
+//!
 //! In order:
 //!
-//! 1. any referencing record is public → anyone, no token needed;
-//! 2. otherwise a referencing record's namespace is one the caller's token
-//!    covers → that caller;
+//! 1. any reference is from a public record (for a run: a public Eval and
+//!    a run that is not archived) → anyone, no token needed;
+//! 2. otherwise a reference's namespace is one the caller's token covers
+//!    → that caller;
 //! 3. an object with no references at all → any valid token. It is an
 //!    upload in flight, and the uploader is the only party that knows its
 //!    sha before it is attached to something. This is the one case where
@@ -228,9 +238,15 @@ async fn may_download(
         return Ok(caller.identity.is_some());
     }
     let namespaces = caller.namespaces();
-    Ok(refs
-        .iter()
-        .any(|r| r.visibility == "public" || namespaces.contains(&r.ns)))
+    Ok(refs.iter().any(|r| {
+        let member = namespaces.contains(&r.ns);
+        // An archived run is shown to members only, so its reference
+        // grants nothing to anyone else, public Eval or not.
+        if r.run_archived {
+            return member;
+        }
+        r.visibility == "public" || member
+    }))
 }
 
 /// `GET /api/v1/attachments/{sha256}` — redirect to a presigned download.

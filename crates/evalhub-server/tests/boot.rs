@@ -121,6 +121,21 @@ async fn schemas_are_served_with_id() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
+/// The Eval header (`eval-2`) and the run have schemas of their own, and
+/// the 1.0 Eval (`eval`) is still served while it is accepted.
+#[tokio::test]
+async fn run_and_eval_header_schemas_are_served() {
+    for name in ["eval-2", "run", "eval"] {
+        let (status, body) = get(&format!("/schemas/{name}")).await;
+        assert_eq!(status, StatusCode::OK, "{name}");
+        assert_eq!(body["additionalProperties"], false, "{name}");
+    }
+    let (_, run) = get("/schemas/run").await;
+    assert!(run["properties"].get("metrics").is_some(), "{run}");
+    let (_, header) = get("/schemas/eval-2").await;
+    assert!(header["properties"].get("runs").is_none(), "{header}");
+}
+
 /// Run the built `evalhub` binary with `args`, isolated from the caller's
 /// configuration (no `EVALHUB_*` variable, no `evalhub.toml` in its working
 /// directory). Waits at most `limit`; a process still running then is

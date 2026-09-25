@@ -11,7 +11,7 @@
     "aggregation": "mean",
     "by": {"grader": "exact_match"}
   }],
-  "counts": {"attempted": 2, "completed": 2, "failed": 1, "skipped": 0, "errored": 0},
+  "counts": {"attempted": 2, "completed": 1, "failed": 1, "skipped": 0, "errored": 0},
   "run_results": [
     {"eval": "alice/single2-k4", "run_id": "r1", "metric": "core/pass", "value": 1.0, "label": "pass", "by": {"grader": "exact_match"}, "from": ["core/tokens_out"]},
     {"eval": "alice/single2-k4", "run_id": "r2", "metric": "core/pass", "label": "fail"}

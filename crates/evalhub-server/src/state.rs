@@ -14,7 +14,8 @@ use crate::auth::CursorSigner;
 use crate::config::Config;
 use crate::error::ApiError;
 
-/// The query path tables, one per record kind.
+/// The query path tables, one per record kind, and the registry entries
+/// the run projection's table is built from.
 ///
 /// A table is the vocabulary of the query language: which paths exist,
 /// what type each has, and whether an index can serve an order or a
@@ -28,6 +29,11 @@ pub struct PathTables {
     pub card: PathTable,
     /// Paths of an Eval.
     pub eval: PathTable,
+    /// The `applied` extension schemas both tables were built with. The
+    /// run projection (`GET /evals/{ns}/{name}/runs`) has no fixed table:
+    /// its `results[{card}]…` paths depend on the Cards a request names,
+    /// so [`PathTables::for_runs`] builds one per request from these.
+    pub ext: Vec<ExtSchema>,
 }
 
 impl PathTables {
@@ -37,6 +43,13 @@ impl PathTables {
             RecordKind::Card => &self.card,
             RecordKind::Eval => &self.eval,
         }
+    }
+
+    /// The run projection's table for a request naming `cards`, with the
+    /// same extension schemas the record tables hold. A few dozen entries;
+    /// built per request.
+    pub fn for_runs(&self, cards: &[evalhub_query::CardRef]) -> PathTable {
+        PathTable::for_runs(cards).with_ext(&self.ext)
     }
 }
 
@@ -57,6 +70,7 @@ impl PathTableHandle {
         Self(Arc::new(RwLock::new(Arc::new(PathTables {
             card: PathTable::from_schema(RecordKind::Card),
             eval: PathTable::from_schema(RecordKind::Eval),
+            ext: Vec::new(),
         }))))
     }
 
@@ -70,7 +84,11 @@ impl PathTableHandle {
     pub async fn rebuild(&self, entries: &[ExtSchema]) {
         let card = PathTable::from_schema(RecordKind::Card).with_ext(entries);
         let eval = PathTable::from_schema(RecordKind::Eval).with_ext(entries);
-        *self.0.write().await = Arc::new(PathTables { card, eval });
+        *self.0.write().await = Arc::new(PathTables {
+            card,
+            eval,
+            ext: entries.to_vec(),
+        });
     }
 }
 

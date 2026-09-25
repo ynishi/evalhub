@@ -214,13 +214,24 @@ async fn query(
     let want_fingerprints = compiled.expand.contains(&ir::Expand::Fingerprints);
     let want_relations = compiled.expand.contains(&ir::Expand::Relations);
     let version_ids: Vec<_> = hits.iter().map(|h| h.version_id).collect();
+    // What this reader may not see of each hit's body: targets of its
+    // relations, and (a Card's) the Evals its run_results judge. Either
+    // one is enough to redact; see `crate::api::relations`.
     let hidden = relations::hidden_targets(pool, &version_ids, &caller_ns).await?;
+    let hidden_evals = match kind {
+        RecordKind::Card => relations::hidden_evals(pool, &version_ids, &caller_ns).await?,
+        RecordKind::Eval => Default::default(),
+    };
     let mut items = Vec::with_capacity(hits.len());
     for hit in hits {
         let version_id = hit.version_id;
         let mut dto = QueryHitDto::from(hit);
-        if let (Some(record), Some(h)) = (dto.record.as_mut(), hidden.get(&version_id)) {
-            dto.withheld = withhold(record, h);
+        if let Some(record) = dto.record.as_mut() {
+            dto.withheld = withhold(
+                record,
+                hidden.get(&version_id).map_or(&[], Vec::as_slice),
+                hidden_evals.get(&version_id).map_or(&[], Vec::as_slice),
+            );
         }
         if want_fingerprints {
             let map = records::load_fingerprints(pool, version_id).await?;

@@ -13,7 +13,38 @@
 //! | `Unavailable(&'static str)`     | 503    | empty; a capability this deployment does not have |
 //! | `NotImplemented(&'static str)`  | 501    | empty; a format the hub has not decided on yet    |
 //! | `RegistryEntryExists(String)`   | 409    | `{ errors: [{ code: registry_entry_exists }] }`   |
+//! | `Conflict(Vec<error::Error>)`   | 409    | `{ errors: [...] }`, every entry a `409` code (`run_deleted`, `attachment_missing`) |
+//! | `TooLarge(Vec<error::Error>)`   | 413    | `{ errors: [{ code: body_too_large \| batch_too_large }] }` |
 //! | `Internal(anyhow::Error)`       | 500    | empty; logged with `error!`           |
+//!
+//! # Store errors
+//!
+//! | `StoreError`                    | Answer |
+//! | ------------------------------- | ------ |
+//! | `RecordNotFound`, `VersionNotFound`, `AlreadyTombstoned`, `NamespaceUnknown`, `NotAnOrganisation`, `RegistryEntryNotFound`, `RunNotFound` | `404` |
+//! | `RunCardsUnknown`               | `404`, empty, whichever Card was unknown and why (see below) |
+//! | `RunDeleted`                    | `409 run_deleted` at `/run_id` |
+//! | `RunsRejected`                  | `422`, or `409` when every entry of every element is a `409` code; see [`ApiError::runs_rejected`] |
+//! | `CardRunsRejected`              | `422` with the store's entries (`run_unknown`, `run_not_in_used_set`) |
+//! | `LabelInUse`                    | `409 label_in_use` |
+//! | `RegistryEntryExists`           | `409 registry_entry_exists` |
+//! | `RegistryCoreReadOnly`          | `403` |
+//! | `LabelInvalid`                  | `400` |
+//! | anything else, `Canonical` included | `500`, as an internal error |
+//!
+//! `RunCardsUnknown` carries the Card names the run projection could not
+//! join, but the answer is the plain `404` every other unknown or private
+//! thing gets: a Card that does not exist, one the caller may not see and
+//! one that does not use the Eval must not be told apart, and a body
+//! listing them would at best repeat what the caller sent.
+//!
+//! `RunsRejected` is the one store error whose status depends on its
+//! content. A run write refused only for state the producer cannot fix in
+//! the body (the id was deleted, an attachment is not confirmed yet) is a
+//! conflict, `409`, as `attachment_missing` is on a record; one with any
+//! validation failure is `422`, because the body has to change first and
+//! the `409` entries ride along so the producer fixes everything in one
+//! round trip. `ErrorCode::status` is the one table of which code is which.
 //!
 //! Domain errors from the library crates (`thiserror` enums) convert into
 //! these variants at the handler boundary; `anyhow` is used only for the
@@ -74,6 +105,12 @@ pub enum ApiError {
     /// A registry address that is already taken. Entries are immutable,
     /// so a correction is a new version rather than a second write.
     RegistryEntryExists(String),
+    /// A state conflict listed entry by entry: every entry carries a `409`
+    /// code (`run_deleted`, `attachment_missing`).
+    Conflict(Vec<ErrorEntry>),
+    /// The request carries more than the configured limits allow
+    /// (`body_too_large`, `batch_too_large`).
+    TooLarge(Vec<ErrorEntry>),
     /// Anything the hub did not expect. Logged; the body is empty.
     Internal(anyhow::Error),
 }
@@ -92,15 +129,54 @@ impl ApiError {
             Self::BadRequest => StatusCode::BAD_REQUEST,
             Self::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             Self::NotImplemented(_) => StatusCode::NOT_IMPLEMENTED,
-            Self::RegistryEntryExists(_) => StatusCode::CONFLICT,
+            Self::RegistryEntryExists(_) | Self::Conflict(_) => StatusCode::CONFLICT,
+            Self::TooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 
-    /// The error envelope, when the status carries one (`422` / `409`).
+    /// A refused run write ([`StoreError::RunsRejected`]) as a response.
+    ///
+    /// With `indexed`, each entry's `path` is prefixed with
+    /// `/runs/{index}`, the element's position in the request's `runs[]`
+    /// (a batch, or the `runs[]` of an `evalhub.eval/1.0` body), so every
+    /// failing element is named with its index; without it (a single
+    /// `PUT`) the paths point into the run body as sent.
+    ///
+    /// The status is `409` when every entry of every element carries a
+    /// `409` code (`run_deleted`, `attachment_missing`), `422` otherwise;
+    /// see the module doc.
+    pub fn runs_rejected(
+        rejections: Vec<evalhub_store::error::RunRejection>,
+        indexed: bool,
+    ) -> Self {
+        let errors: Vec<ErrorEntry> = rejections
+            .into_iter()
+            .flat_map(|r| {
+                let index = r.index;
+                r.errors.into_iter().map(move |mut e| {
+                    if indexed {
+                        e.path = format!("/runs/{index}{}", e.path);
+                    }
+                    e
+                })
+            })
+            .collect();
+        if !errors.is_empty() && errors.iter().all(|e| e.code.status() == 409) {
+            Self::Conflict(errors)
+        } else {
+            Self::Validation(errors)
+        }
+    }
+
+    /// The error envelope, when the status carries one (`422` / `409` /
+    /// `413`).
     fn envelope(&self) -> Option<ErrorEnvelope> {
         match self {
-            Self::Validation(errors) | Self::AttachmentMissing(errors) => Some(ErrorEnvelope {
+            Self::Validation(errors)
+            | Self::AttachmentMissing(errors)
+            | Self::Conflict(errors)
+            | Self::TooLarge(errors) => Some(ErrorEnvelope {
                 errors: errors.clone(),
             }),
             Self::LabelInUse => Some(ErrorEnvelope {
@@ -146,6 +222,8 @@ impl std::fmt::Display for ApiError {
             Self::Unavailable(what) => write!(f, "unavailable: {what}"),
             Self::NotImplemented(what) => write!(f, "not implemented: {what}"),
             Self::RegistryEntryExists(address) => write!(f, "registry entry exists: {address}"),
+            Self::Conflict(e) => write!(f, "conflict with {} entr(y/ies)", e.len()),
+            Self::TooLarge(_) => write!(f, "request too large"),
             Self::Internal(e) => write!(f, "internal error: {e:#}"),
         }
     }
@@ -175,7 +253,20 @@ impl From<StoreError> for ApiError {
             | StoreError::NotAnOrganisation(_)
             | StoreError::RecordNotFound
             | StoreError::VersionNotFound
-            | StoreError::AlreadyTombstoned => Self::NotFound,
+            | StoreError::AlreadyTombstoned
+            | StoreError::RunNotFound => Self::NotFound,
+            // Which Cards, and why, is deliberately not said; see the
+            // module doc.
+            StoreError::RunCardsUnknown(_) => Self::NotFound,
+            StoreError::RunDeleted => Self::Conflict(vec![ErrorEntry {
+                path: "/run_id".to_string(),
+                code: ErrorCode::RunDeleted,
+                hint: Some("the run was deleted; a deleted run is not changed again".to_string()),
+            }]),
+            // A batch or a 1.0 body; a single `PUT` converts it itself,
+            // without the index prefix.
+            StoreError::RunsRejected(rejections) => Self::runs_rejected(rejections, true),
+            StoreError::CardRunsRejected(errors) => Self::Validation(errors),
             // Needs the record's attachment paths to name the offenders;
             // the handler converts it before it reaches here.
             other => Self::Internal(anyhow::Error::new(other)),
@@ -213,10 +304,19 @@ impl OperationOutput for ApiError {
         Json::<ErrorEnvelope>::operation_response(ctx, operation)
     }
 
+    /// The error responses every handler returning `ApiError` documents.
+    ///
+    /// `413` is listed only for an operation that takes a request body:
+    /// the router's `DefaultBodyLimit` refuses bodies, so an operation
+    /// without one (a `GET`, a `HEAD`) can never answer it. aide adds the
+    /// handler's inputs before its outputs, so `request_body` is already
+    /// set when this runs. Handlers that do not return `ApiError`
+    /// (`healthz`, `whoami`) document none of these.
     fn inferred_responses(
         ctx: &mut GenContext,
         operation: &mut Operation,
     ) -> Vec<(Option<ApiStatus>, Response)> {
+        let takes_body = operation.request_body.is_some();
         let mut envelope = |description: &str| {
             let mut r =
                 Json::<ErrorEnvelope>::operation_response(ctx, operation).unwrap_or_default();
@@ -227,14 +327,17 @@ impl OperationOutput for ApiError {
             description: description.to_string(),
             ..Default::default()
         };
-        vec![
+        let mut responses = vec![
             (
                 Some(ApiStatus::Code(422)),
                 envelope("The record is invalid; every violation is listed."),
             ),
             (
                 Some(ApiStatus::Code(409)),
-                envelope("State conflict: an attachment is not ready, or the label is taken."),
+                envelope(
+                    "State conflict: an attachment is not ready, the label is taken, or the \
+                     run was deleted.",
+                ),
             ),
             (
                 Some(ApiStatus::Code(404)),
@@ -248,6 +351,16 @@ impl OperationOutput for ApiError {
                 Some(ApiStatus::Code(401)),
                 empty("No token, or an unrecognised one."),
             ),
-        ]
+        ];
+        if takes_body {
+            responses.push((
+                Some(ApiStatus::Code(413)),
+                envelope(
+                    "The body is larger than `limits.body_bytes`, or a batch carries more \
+                     runs than `limits.batch_runs`.",
+                ),
+            ));
+        }
+        responses
     }
 }
