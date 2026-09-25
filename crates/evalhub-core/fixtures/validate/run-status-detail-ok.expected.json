@@ -1,0 +1,4 @@
+[
+  {"path": "/error", "code": "run_status_detail"},
+  {"path": "/skip_reason", "code": "run_status_detail"}
+]

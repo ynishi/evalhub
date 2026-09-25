@@ -1,0 +1,5 @@
+[
+  {"path": "/metrics/Core~1x", "code": "metric_id_invalid"},
+  {"path": "/metrics/a~1b~1c", "code": "metric_id_invalid"},
+  {"path": "/metrics/tokens", "code": "metric_id_invalid"}
+]

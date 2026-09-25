@@ -1,0 +1,11 @@
+{
+  "run_id": "r1",
+  "body": {
+    "run_id": "r1",
+    "status": "ok",
+    "error": {
+      "kind": "timeout"
+    },
+    "skip_reason": "x"
+  }
+}

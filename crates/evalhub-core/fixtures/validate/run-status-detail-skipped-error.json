@@ -1,0 +1,11 @@
+{
+  "run_id": "r1",
+  "body": {
+    "run_id": "r1",
+    "status": "skipped",
+    "skip_reason": "left out by --limit",
+    "error": {
+      "kind": "timeout"
+    }
+  }
+}

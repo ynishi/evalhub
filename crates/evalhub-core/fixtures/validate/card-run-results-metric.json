@@ -1,0 +1,73 @@
+{
+  "schema": "evalhub.card/1.1",
+  "title": "run_results metric ids",
+  "producer": {
+    "name": "my-harness",
+    "version": "0.4.1"
+  },
+  "model": {
+    "id": "qwen3.6-32b"
+  },
+  "task": {
+    "id": "single2",
+    "version": "3",
+    "split": "test",
+    "n": 33
+  },
+  "grading": {
+    "graders": [
+      {
+        "name": "exact_match",
+        "kind": "deterministic"
+      }
+    ]
+  },
+  "results": [
+    {
+      "metric": "core/pass_rate",
+      "value": 0.5,
+      "n": 2,
+      "aggregation": "mean",
+      "by": {
+        "grader": "exact_match"
+      }
+    }
+  ],
+  "counts": {
+    "attempted": 2,
+    "completed": 1,
+    "failed": 1,
+    "skipped": 0,
+    "errored": 0
+  },
+  "run_results": [
+    {
+      "eval": "alice/single2-k4",
+      "run_id": "r1",
+      "metric": "pass",
+      "value": 1.0
+    },
+    {
+      "eval": "alice/single2-k4",
+      "run_id": "r2",
+      "metric": "core/pass",
+      "label": "fail",
+      "from": [
+        "core/tokens_out"
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "type": "core/uses_eval",
+      "to": "alice/single2-k4@3",
+      "attrs": {
+        "runs": [
+          "r1",
+          "r2"
+        ]
+      }
+    }
+  ],
+  "ext": {}
+}

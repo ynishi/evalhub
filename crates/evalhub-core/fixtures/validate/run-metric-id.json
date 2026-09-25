@@ -1,0 +1,13 @@
+{
+  "run_id": "r1",
+  "body": {
+    "run_id": "r1",
+    "status": "ok",
+    "metrics": {
+      "core/tokens_out": 10,
+      "tokens": 1,
+      "Core/x": 2,
+      "a/b/c": 3
+    }
+  }
+}
