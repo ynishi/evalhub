@@ -24,6 +24,20 @@ pub enum StoreError {
     #[error("database has pending migrations: {0:?}; run `evalhub migrate`")]
     MigrationsPending(Vec<i64>),
 
+    /// A one-shot data migration ([`crate::data_migrations`]) found data it
+    /// will not convert, and stopped. Its transaction was rolled back, so
+    /// the database is exactly as before the attempt and the migration is
+    /// still pending. `problems` names every offending item found (one
+    /// line each, with the record and version it is in), not only the
+    /// first, so the operator fixes the data in one round.
+    #[error("data migration {name} stopped, nothing was changed: {}", .problems.join("; "))]
+    DataMigrationRefused {
+        /// The data migration, e.g. `0003_runs_split`.
+        name: &'static str,
+        /// One line per offending item.
+        problems: Vec<String>,
+    },
+
     /// A write named a namespace that has no `namespaces` row. Namespaces
     /// are created by user or organisation creation, never implicitly by a
     /// record write.

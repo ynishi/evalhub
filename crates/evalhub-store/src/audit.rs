@@ -31,6 +31,11 @@
 //! | `run.archive`         | `eval/{ns}/{name}/runs/{run_id}`   | `runs::archive`                     |
 //! | `run.unarchive`       | `eval/{ns}/{name}/runs/{run_id}`   | `runs::unarchive`                   |
 //! | `run.delete`          | `eval/{ns}/{name}/runs/{run_id}`   | `runs::tombstone`                   |
+//! | `migration.runs_split` | `eval/{ns}/{name}@{seq}`          | `data_migrations` (`0003_runs_split`); one row per rewritten version, `{ version_id, old_content_hash, new_content_hash }` |
+//! | `migration.card_runs_unmatched` | `card/{ns}/{name}@{seq}` | `data_migrations` (`0003_runs_split`); one row per (Card version, Eval) whose used `run_id`s have no row, `{ card_version_id, eval, run_ids }` |
+//!
+//! The two `migration.*` actions are written by `evalhub migrate`, not by a
+//! request, so both actor columns are NULL, as for the CLI bootstrap.
 //!
 //! `ns` is the namespace the action concerns; it is what the read side
 //! filters on, so an action touching several namespaces writes one row

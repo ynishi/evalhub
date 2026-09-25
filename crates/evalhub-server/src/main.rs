@@ -29,7 +29,8 @@ struct Cli {
 enum Command {
     /// Run the HTTP server.
     Serve(ServeArgs),
-    /// Apply pending database migrations.
+    /// Apply pending database migrations: the SQL schema, then the
+    /// one-shot data migrations, each printed as it is applied.
     Migrate(DbArgs),
     /// Inspect the effective configuration.
     Config {
@@ -225,8 +226,15 @@ async fn serve(loaded: Loaded) -> anyhow::Result<()> {
     let pending = evalhub_store::pool::pending_migrations(&pool)
         .await
         .context("checking migrations")?;
+    // `pending` covers the SQL migrations and the one-shot data
+    // migrations alike, so a database whose DDL is current but whose data
+    // step has not run is refused here too.
     if !pending.is_empty() {
-        anyhow::bail!("database has pending migrations {pending:?}; run `evalhub migrate` first");
+        let list: Vec<String> = pending.iter().map(ToString::to_string).collect();
+        anyhow::bail!(
+            "database has pending migrations [{}]; run `evalhub migrate` first",
+            list.join(", ")
+        );
     }
     info!("database connected, schema current");
 
@@ -302,9 +310,18 @@ async fn migrate(loaded: Loaded) -> anyhow::Result<()> {
             "no database configured (set database.url, EVALHUB_DATABASE__URL, or --database-url)"
         );
     };
-    evalhub_store::pool::migrate(&pool)
+    let applied = evalhub_store::pool::migrate(&pool)
         .await
         .context("applying migrations")?;
+    // One line per data migration applied, on stdout, so the release
+    // command's log says what the data step did; a second run prints that
+    // there was nothing to do.
+    if applied.is_empty() {
+        println!("no data migration pending");
+    }
+    for a in &applied {
+        println!("applied data migration {}: {}", a.name, a.summary);
+    }
     info!("migrations applied");
     Ok(())
 }
