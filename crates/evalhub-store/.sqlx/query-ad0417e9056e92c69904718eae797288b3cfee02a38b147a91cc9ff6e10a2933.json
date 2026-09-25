@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT runs_hash FROM records WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "runs_hash",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "records",
+            "name": "runs_hash"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "ad0417e9056e92c69904718eae797288b3cfee02a38b147a91cc9ff6e10a2933"
+}

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT a.sha256 FROM attachments a\n         WHERE a.created_at < $1\n           AND NOT EXISTS (SELECT 1 FROM attachment_refs ar WHERE ar.sha256 = a.sha256)\n         ORDER BY a.created_at",
+  "query": "SELECT a.sha256 FROM attachments a\n         WHERE a.created_at < $1\n           AND NOT EXISTS (SELECT 1 FROM attachment_refs ar WHERE ar.sha256 = a.sha256)\n           AND NOT EXISTS (SELECT 1 FROM run_attachment_refs rr WHERE rr.sha256 = a.sha256)\n         ORDER BY a.created_at",
   "describe": {
     "columns": [
       {
@@ -24,5 +24,5 @@
       false
     ]
   },
-  "hash": "5783f040746f8d48e1a29857e3a7cbc8f85a7b1cda6e9438f6faddb852c6c694"
+  "hash": "9075ccfd733b538aa58acfcfde90f316a572d4a48db48c84445296cc5c108704"
 }

@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO run_attachment_refs (record_id, run_id, path, sha256)\n             SELECT $1, $2, p, s FROM UNNEST($3::text[], $4::bytea[]) AS t (p, s)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "TextArray",
+        "ByteaArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "38fc8fd6cb6f161c029a0b2dfbc5e7d13867ee14f66c35956b1f1139f9f0ff5d"
+}

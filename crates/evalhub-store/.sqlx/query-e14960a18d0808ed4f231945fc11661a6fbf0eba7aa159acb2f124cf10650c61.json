@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO run_fingerprints (record_id, run_id, facet, fingerprint)\n             SELECT $1, $2, f, p FROM UNNEST($3::text[], $4::bytea[]) AS t (f, p)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "TextArray",
+        "ByteaArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e14960a18d0808ed4f231945fc11661a6fbf0eba7aa159acb2f124cf10650c61"
+}

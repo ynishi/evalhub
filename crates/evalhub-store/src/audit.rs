@@ -4,8 +4,9 @@
 //! detail jsonb)`. Written in the same transaction as the action it
 //! records, for: record creation, version append, tombstone, settings
 //! change, label change, org membership change, token issue and revoke,
-//! registry writes. Reads are `GET /audit?ns=&cursor=`, restricted to
-//! namespaces the caller holds `admin` on.
+//! registry writes, and every run write that changes something. Reads are
+//! `GET /audit?ns=&cursor=`, restricted to namespaces the caller holds
+//! `admin` on.
 //!
 //! Rows are never updated or deleted by the application. The table has no
 //! `UPDATE` or `DELETE` grant for the application role in the migration,
@@ -25,6 +26,11 @@
 //! | `org.create`          | `{ns}`                             | `auth::create_org`                  |
 //! | `org.member.add`      | `{login}`                          | `auth::add_org_member`              |
 //! | `org.member.remove`   | `{login}`                          | `auth::remove_org_member`           |
+//! | `run.create`          | `eval/{ns}/{name}/runs/{run_id}`   | `runs::put` / `put_batch`, and the 1.0 ingest; one row per run created |
+//! | `run.update`          | `eval/{ns}/{name}/runs/{run_id}`   | as `run.create`; one row per run overwritten (not for an unchanged one) |
+//! | `run.archive`         | `eval/{ns}/{name}/runs/{run_id}`   | `runs::archive`                     |
+//! | `run.unarchive`       | `eval/{ns}/{name}/runs/{run_id}`   | `runs::unarchive`                   |
+//! | `run.delete`          | `eval/{ns}/{name}/runs/{run_id}`   | `runs::tombstone`                   |
 //!
 //! `ns` is the namespace the action concerns; it is what the read side
 //! filters on, so an action touching several namespaces writes one row

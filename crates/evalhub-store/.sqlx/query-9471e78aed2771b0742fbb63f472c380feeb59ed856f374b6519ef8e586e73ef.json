@@ -1,0 +1,65 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n             COUNT(*) FILTER (WHERE archived_at IS NULL AND tombstoned_at IS NULL) AS \"count!\",\n             COUNT(*) FILTER (WHERE archived_at IS NULL AND tombstoned_at IS NULL AND status = 'ok') AS \"ok!\",\n             COUNT(*) FILTER (WHERE archived_at IS NULL AND tombstoned_at IS NULL AND status = 'error') AS \"error!\",\n             COUNT(*) FILTER (WHERE archived_at IS NULL AND tombstoned_at IS NULL AND status = 'skipped') AS \"skipped!\",\n             COUNT(*) FILTER (WHERE archived_at IS NOT NULL AND tombstoned_at IS NULL) AS \"archived!\",\n             COUNT(*) FILTER (WHERE tombstoned_at IS NOT NULL) AS \"deleted!\",\n             (SELECT runs_hash FROM records WHERE id = $1) AS runs_hash\n           FROM runs WHERE record_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "ok!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "error!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "skipped!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "archived!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "deleted!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "runs_hash",
+        "type_info": "Bytea",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "9471e78aed2771b0742fbb63f472c380feeb59ed856f374b6519ef8e586e73ef"
+}

@@ -137,6 +137,51 @@ pub enum StoreError {
     /// derive typed paths from.
     #[error("ext_schema {0} cannot be indexed: {1}")]
     ExtSchemaInvalid(String, String),
+
+    /// A run write addressed a `run_id` the Eval has no row for (archive,
+    /// unarchive, delete). A `put` of an unknown id creates it instead.
+    #[error("run does not exist")]
+    RunNotFound,
+
+    /// Archive, unarchive or delete addressed a run that is already
+    /// deleted (tombstoned). Maps to `409 run_deleted`. A `put` of a
+    /// deleted id is reported per element in [`StoreError::RunsRejected`]
+    /// instead, with the same code.
+    #[error("run is deleted")]
+    RunDeleted,
+
+    /// A `put` or `put_batch` (or the runs of an `evalhub.eval/1.0` body)
+    /// was refused, and nothing was written. Carries every failing element,
+    /// in input order, each with the reasons it failed: the validation
+    /// codes of `evalhub_core::validate::run`, `batch_duplicate_run_id`,
+    /// `run_deleted` and `attachment_missing`. The HTTP status is the
+    /// server's to choose from the codes (`ErrorCode::status`).
+    #[error("{} run(s) rejected", .0.len())]
+    RunsRejected(Vec<RunRejection>),
+
+    /// Canonicalising a body failed. Not expected for a value parsed from
+    /// JSON text; surfaced rather than unwrapped because a hash of a
+    /// partially written buffer must never be stored.
+    #[error(transparent)]
+    Canonical(#[from] evalhub_core::canonical::CanonicalError),
+}
+
+/// One refused element of a run write. See [`StoreError::RunsRejected`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunRejection {
+    /// Position of the element in the input: the batch's `runs[]`, `0` for
+    /// a single `put`, or the position in the posted `runs[]` for a
+    /// converted `evalhub.eval/1.0` body (the last element carrying that
+    /// `run_id`, which is the one the conversion kept).
+    pub index: usize,
+    /// The `run_id` the element was written under (empty when it had none).
+    pub run_id: String,
+    /// Every reason, sorted by `(path, code)`. `path` is a JSON pointer
+    /// into the run body, as `evalhub_core::validate::run` reports it.
+    /// `attachment_missing` is looked up only for an element that passed
+    /// every other check (its digests are only known to be well formed
+    /// then), so an element can gain it on a second attempt.
+    pub errors: Vec<evalhub_schema::error::ErrorEntry>,
 }
 
 impl From<sqlx::Error> for StoreError {
