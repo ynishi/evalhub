@@ -10,15 +10,20 @@
 		type Kind,
 		type ListItem,
 		type QueryHit,
-		type QueryRequest
+		type QueryRequest,
+		type Withheld as WithheldCounts
 	} from '$lib/api/client';
 	import Badges from '$lib/components/Badges.svelte';
 	import Errors from '$lib/components/Errors.svelte';
 	import QueryBuilder from '$lib/components/QueryBuilder.svelte';
+	import Withheld from '$lib/components/Withheld.svelte';
 
 	let { kind }: { kind: Kind } = $props();
 
-	const schemaName = $derived(kind === 'cards' ? 'card' : 'eval');
+	// `/schemas/eval` stays the 1.0 document (header and `runs[]` in one)
+	// for the compatibility release; the stored Eval is the 2.0 header,
+	// which is what a record query ranges over.
+	const schemaName = $derived(kind === 'cards' ? 'card' : 'eval-2');
 	const singular = $derived(kind === 'cards' ? 'Card' : 'Eval');
 
 	let ns = $state('');
@@ -34,6 +39,8 @@
 		badges: string[];
 		created_at: string;
 		visibility?: string;
+		/** What the query result's body lost to the caller's visibility. */
+		withheld?: WithheldCounts | null;
 	}
 
 	let rows = $state<Row[]>([]);
@@ -67,7 +74,8 @@
 					: undefined,
 			seq: hit.seq,
 			badges: hit.badges ?? [],
-			created_at: hit.created_at
+			created_at: hit.created_at,
+			withheld: hit.withheld
 		};
 	}
 
@@ -204,6 +212,7 @@
 						<td>
 							<a href="/{kind}/{row.ns}/{row.name}">{row.ns}/{row.name}</a>
 							{#if row.visibility === 'private'}<span class="tag">private</span>{/if}
+							<Withheld withheld={row.withheld} compact />
 						</td>
 						<td>{row.title ?? ''}</td>
 						<td class="num">{row.seq}</td>

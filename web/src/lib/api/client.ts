@@ -46,6 +46,24 @@ export type Member = components['schemas']['MemberDto'];
 export type Scope = components['schemas']['ScopeDto'];
 /** Whether a record is public or private. */
 export type Visibility = components['schemas']['VisibilityParam'];
+/** What a read removed from a record body because the reader may not see it. */
+export type Withheld = components['schemas']['Withheld'];
+/** An Eval's runs, counted, as its `GET` envelope carries them. */
+export type RunsSummary = components['schemas']['RunsSummaryDto'];
+/** One page of an Eval's runs, joined with the requested Cards' judgements. */
+export type RunPage = components['schemas']['RunPageDto'];
+/** One row of that page. */
+export type RunRow = components['schemas']['RunRowDto'];
+/** A Card of the request, as the run page joined it. */
+export type RunPageCard = components['schemas']['RunPageCardDto'];
+/** One run as stored, or its tombstone. */
+export type RunEnvelope = components['schemas']['RunEnvelope'];
+/** What `PUT …/runs/{run_id}` did. */
+export type RunWritten = components['schemas']['RunWrittenDto'];
+/** What `POST …/runs:batch` did, per run. */
+export type RunsWritten = components['schemas']['BatchResponse'];
+/** Why a run is deleted. */
+export type TombstoneReason = components['schemas']['TombstoneReasonParam'];
 
 /** The two kinds of record, as they appear in a URL. */
 export type Kind = 'cards' | 'evals';
@@ -217,6 +235,93 @@ export async function comparison(ns: string, name: string, groupBy?: string): Pr
 	return unwrap(await api.GET('/api/v1/evals/{ns}/{name}/cards', params), 'the comparison view');
 }
 
+/** The query string of `GET …/runs`. `cards` and `sort` repeat. */
+export interface RunsQuery {
+	/** `{ns}/{name}` of each Card whose judgements to join, in column order. */
+	cards?: string[];
+	/** The filter, as the query grammar's JSON text. */
+	where?: string;
+	/** `{path}`, `{path}:asc` or `{path}:desc`, most significant first. */
+	sort?: string[];
+	/** Page size, 1–200. */
+	limit?: number;
+	/** The previous page's `next_cursor`. */
+	cursor?: string;
+	/** `archived`, `deleted` or both; honoured for members only. */
+	include?: string;
+}
+
+/** One page of an Eval's runs. Runs belong to the record, so `name` never
+ * carries an `@{seq}`. */
+export async function listRuns(ns: string, name: string, query: RunsQuery = {}): Promise<RunPage> {
+	const params = { params: { path: { ns, name }, query } } as never;
+	return unwrap(await api.GET('/api/v1/evals/{ns}/{name}/runs', params), 'listing runs');
+}
+
+/** One run as stored; a deleted run comes back as its tombstone. */
+export async function getRun(ns: string, name: string, runId: string): Promise<RunEnvelope> {
+	const params = { params: { path: { ns, name, run_id: runId } } } as never;
+	return unwrap(
+		await api.GET('/api/v1/evals/{ns}/{name}/runs/{run_id}', params),
+		'reading the run'
+	);
+}
+
+/** Write one run under the `run_id` it carries. */
+export async function putRun(
+	ns: string,
+	name: string,
+	run: Record<string, unknown> & { run_id: string }
+): Promise<RunWritten> {
+	const params = { params: { path: { ns, name, run_id: run.run_id } }, body: run } as never;
+	return unwrap(
+		await api.PUT('/api/v1/evals/{ns}/{name}/runs/{run_id}', params),
+		'writing the run'
+	);
+}
+
+/** Write several runs in one transaction: all or nothing. */
+export async function putRuns(
+	ns: string,
+	name: string,
+	runs: Record<string, unknown>[]
+): Promise<RunsWritten> {
+	const params = { params: { path: { ns, name } }, body: { runs } } as never;
+	return unwrap(await api.POST('/api/v1/evals/{ns}/{name}/runs:batch', params), 'writing the runs');
+}
+
+/** Archive or unarchive a run. */
+export async function archiveRun(
+	ns: string,
+	name: string,
+	runId: string,
+	archived: boolean
+): Promise<RunEnvelope> {
+	const params = { params: { path: { ns, name, run_id: runId } }, body: { archived } } as never;
+	return unwrap(
+		await api.PATCH('/api/v1/evals/{ns}/{name}/runs/{run_id}', params),
+		'archiving the run'
+	);
+}
+
+/** Delete a run. The id, the content hash and the metrics stay. */
+export async function deleteRun(
+	ns: string,
+	name: string,
+	runId: string,
+	reason: TombstoneReason,
+	note?: string
+): Promise<RunEnvelope> {
+	const params = {
+		params: { path: { ns, name, run_id: runId } },
+		body: { reason, note: note ?? null }
+	} as never;
+	return unwrap(
+		await api.DELETE('/api/v1/evals/{ns}/{name}/runs/{run_id}', params),
+		'deleting the run'
+	);
+}
+
 /** Make a record public or private. */
 export async function setVisibility(
 	kind: Kind,
@@ -314,8 +419,9 @@ export async function listRegistry(
 	).items;
 }
 
-/** Fetch one of the served JSON Schemas (`card`, `eval`, `error`,
- * `query`). The query builder walks these for its path vocabulary, which
+/** Fetch one of the served JSON Schemas (`card`, `eval` (the 1.0 body,
+ * until 0.3.0), `eval-2` (the Eval header), `run`, `error`, `query`). The
+ * query builder walks these for its path vocabulary, which
  * is why it stays right when the record types change. */
 export async function getSchema(name: string): Promise<Record<string, unknown>> {
 	const response = await raw(`/schemas/${name}`, { method: 'GET' });

@@ -17,6 +17,7 @@
 	import Errors from '$lib/components/Errors.svelte';
 	import Facets from '$lib/components/Facets.svelte';
 	import Relations from '$lib/components/Relations.svelte';
+	import Withheld from '$lib/components/Withheld.svelte';
 	import { session } from '$lib/session.svelte';
 
 	const ns = $derived(page.params.ns ?? '');
@@ -97,6 +98,7 @@
 
 <Errors {error} />
 {#if notice}<p class="notice">{notice}</p>{/if}
+<Withheld withheld={version?.withheld} />
 
 {#if version?.tombstone}
 	<div class="notice error">

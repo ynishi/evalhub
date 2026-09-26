@@ -22,7 +22,7 @@
 		error = null,
 		onrun
 	}: {
-		schemaName: 'card' | 'eval';
+		schemaName: 'card' | 'eval-2';
 		error?: unknown;
 		onrun: (where: Filter | undefined) => void;
 	} = $props();
