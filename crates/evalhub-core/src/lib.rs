@@ -12,7 +12,10 @@
 //! # The model: records, and the runs of an Eval
 //!
 //! There are two record kinds, a Card and an Eval, each an append-only
-//! sequence of immutable versions under a name. An Eval's versioned body is
+//! sequence of immutable versions under a name (the one exception is the
+//! 0.2.0 data migration of stored 1.0 bodies, which runs through
+//! [`eval::split_v1`] here and is `evalhub_store`'s to perform and
+//! audit). An Eval's versioned body is
 //! a *header*; its runs are rows of the Eval record, outside every version.
 //! Writing a run does not append a header version, and a header version
 //! does not rewrite a run.
@@ -33,7 +36,11 @@
 //! and a run is fingerprinted from its own facets ([`fingerprint::for_run`]).
 //! A run records what happened, never whether it passed; the verdict is a
 //! Card's `run_results`, whose form this crate checks and whose references
-//! to stored runs the store checks.
+//! to stored runs the store checks. The runs a Card judged, per Eval, are
+//! its *used set*: the `attrs.runs` of its `core/uses_eval` relations, or
+//! every run neither archived nor deleted when it is posted; this crate
+//! hashes a used set ([`run::runs_hash`]) but never computes one, because
+//! that needs the stored runs.
 //!
 //! # What the hub derives from a record
 //!
@@ -134,7 +141,12 @@
 //! - It does not know which runs exist. Whether a `run_results[].run_id`
 //!   names a stored run, and whether it is in the Card's used set, is the
 //!   store's check (`run_unknown`, `run_not_in_used_set`); how many
-//!   `run_results` a Card may carry is the server's (`too_many_run_results`).
+//!   `run_results` a Card may carry is the server's (`too_many_run_results`),
+//!   as are the request body and batch limits.
+//! - It does not know who is asking. Visibility (runs follow their Eval,
+//!   `run_results` follow their Card, and entries naming an Eval the
+//!   reader may not see are withheld) is decided by the store and the
+//!   server; every function here answers the same for every caller.
 //!
 //! # Modules
 //!

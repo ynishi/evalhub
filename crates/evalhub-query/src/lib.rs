@@ -106,6 +106,26 @@
 //!      ──▶ ir::RunQuery      { cards, filter, sort, limit, cursor: RunCursor }
 //! ```
 //!
+//! A second target because a run is not a record. An Eval is a versioned
+//! header plus runs that belong to the record, not to a version, so the
+//! header's schema (what the record table is projected from) has no
+//! `runs` key, and a record query cannot reach a run. A Card judges runs
+//! in `run_results`, within its *used set* (the runs of the Eval it
+//! used); the projection is where the two meet, one row per run with the
+//! judgements of each named Card. What the page reports beside the rows
+//! (per Card the used-set hash, the one recorded when the Card was
+//! posted, and the runs changed since; each row's `content_hash`) is
+//! computed by the store with `evalhub_core::run` and is not a path of
+//! this table, and neither is the record's `runs_hash`, which the Eval's
+//! own `GET` and every run write report. Nor is anything
+//! about who is asking: runs follow their Eval's visibility, judgements
+//! their Card's, and the limits (page size 1–200, the batch size, the
+//! number of `run_results` per Card) are the server's; a query that
+//! compiles here says nothing about what the caller may see. None of it
+//! writes: header versions are write-once (the one exception, the 0.2.0
+//! data migration, is `evalhub_store`'s) and runs are written through
+//! the run endpoints, not through this crate.
+//!
 //! [`PathTable::for_runs`] is built by hand, not from a record schema: the
 //! run's columns (`run_id`, `status`, `error.kind`, `started_at`,
 //! `ended_at`), the keys of its six facets (the Eval header's key set,

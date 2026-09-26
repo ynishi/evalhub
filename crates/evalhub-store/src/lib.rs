@@ -8,8 +8,7 @@
 //! backend and no "files are truth, the index is derived" mode: a hub that
 //! could be rebuilt from files would need a `reindex` command, and a
 //! `reindex` command is where two sources of truth start to disagree.
-//! Portability is `pg_dump` plus a bucket sync, or per-record
-//! `export?format=bundle`.
+//! Portability is `pg_dump` plus a bucket sync.
 //!
 //! Object storage holds attachment bytes only, keyed by sha256. The hub
 //! hands out presigned URLs and never proxies bytes; this is what keeps the
@@ -65,10 +64,28 @@
 //! runs of one Eval as rows joined with chosen Cards' judgements, through
 //! the SQL of [`run_sql`].
 //!
+//! Four hashes are stored or derived here, every one with the formula of
+//! `evalhub_core` (the crate doc's table), none of them trusted from a
+//! client:
+//!
+//! ```text
+//! header content_hash  versions.content_hash         set when the version is written
+//! run content_hash     runs.content_hash             set on every write that changes the run
+//! runs_hash            records.runs_hash             recomputed with every run write that adds or
+//!                                                    overwrites a run, same transaction
+//! used-set hash        over card_eval_runs (posted)  computed on read: posted_used_set_hash,
+//!                      and over runs (current)       used_set_hash, changed_since_card
+//! ```
+//!
 //! Release 0.2.0 still accepts an `evalhub.eval/1.0` body (header and
 //! `runs[]` together); [`records::ingest`] splits it and writes the runs
 //! through the same code as a batch, in the one transaction. See
 //! [`records`].
+//!
+//! The request limits (body size, runs per batch, `run_results` per Card
+//! version) are the server's, checked before this crate is called; the
+//! store enforces none of them. What reaches it is written whole or not
+//! at all, whatever its size.
 //!
 //! # No EAV: the index lives on the JSON body
 //!

@@ -28,11 +28,16 @@
 //! An Eval's runs are not versions. They belong to the record: written
 //! under a producer-chosen `run_id` one by one or in a batch,
 //! overwritten in place, archived, deleted, none of which appends a
-//! header version. What keeps them verifiable is hashing, not immutability:
-//! each run has a `content_hash`, the record has one `runs_hash` over
-//! all of them, and a Card records the hashes of the runs it judged, so a
-//! run overwritten since shows up in the Card's `changed_since_card`
-//! ([`api::runs`]).
+//! header version. What keeps them verifiable is hashing, not immutability.
+//! Four hashes, each a formula in `evalhub_core` a client can recompute:
+//! the header version's `content_hash`; each run's `content_hash`; the
+//! record's `runs_hash` over every run, archived and deleted included;
+//! and a used-set hash. A Card's *used set* is, per Eval it uses, the
+//! runs it judged: the `attrs.runs` of its `core/uses_eval` relations,
+//! or every run neither archived nor deleted when the Card was posted.
+//! The hub records each used run's hash at posting, so a run overwritten
+//! since shows up in the Card's `changed_since_card` ([`api::runs`]).
+//! Archiving or deleting a run changes no hash.
 //!
 //! # What evalhub is not
 //!
@@ -155,6 +160,15 @@
 //! Every write requires a token. A token has a `scope` (`read` / `write` /
 //! `admin`) over a list of namespaces. Organisations have members with
 //! roles. Visibility is per name. See [`auth`].
+//!
+//! Runs have no visibility of their own: they follow their Eval, and an
+//! archived run, with the archived and deleted counts, is shown to members
+//! of the namespace only. A Card's `run_results` follow the Card, but a
+//! reader who may not see the Eval an entry names is never shown that
+//! entry: it is removed from the body and counted in
+//! `withheld.run_results`, on `GET` and on `POST /cards/query`. A writer
+//! who names a run of an Eval they may not see gets `run_unknown`, the
+//! answer for a run that does not exist.
 //!
 //! # Interoperability
 //!
