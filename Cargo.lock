@@ -1102,7 +1102,7 @@ dependencies = [
 
 [[package]]
 name = "evalhub-core"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "evalhub-schema",
  "hex",
@@ -1122,7 +1122,7 @@ dependencies = [
 
 [[package]]
 name = "evalhub-query"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "dsl-kit-core",
  "dsl-kit-macros",
@@ -1142,7 +1142,7 @@ dependencies = [
 
 [[package]]
 name = "evalhub-schema"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "insta",
@@ -1154,7 +1154,7 @@ dependencies = [
 
 [[package]]
 name = "evalhub-server"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "aide",
  "anyhow",
@@ -1194,7 +1194,7 @@ dependencies = [
 
 [[package]]
 name = "evalhub-store"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "evalhub-core",

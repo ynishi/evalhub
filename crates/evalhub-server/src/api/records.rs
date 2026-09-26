@@ -54,8 +54,9 @@
 //! `converted_runs`, the runs as a batch reports them. Posting the same
 //! 1.0 body again is `200` with every run `unchanged`. A refused run
 //! refuses the whole post, its entries prefixed `/runs/{index}` of the
-//! posted `runs[]`. **0.3.0 removes this**: a 1.0 body will then be
-//! refused like any unknown `schema`.
+//! posted `runs[]`. **0.3.0 removes this**: a 1.0 body with `runs` will
+//! then be refused with `422 runs_moved`, as a 2.0 header with `runs` is
+//! now.
 //!
 //! # A Card's `run_results`
 //!

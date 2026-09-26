@@ -40,7 +40,9 @@
 //! A `card::Card` says *what was measured, how, and what the score was*. An
 //! `eval::Eval` is *the material*: a set of runs, prompts, tasks or traces
 //! that a Card was measured from. Both are published under a name,
-//! `{ns}/{name}`, as an append-only sequence of immutable versions. The
+//! `{ns}/{name}`, as an append-only sequence of immutable versions (the one
+//! exception, the 0.2.0 data migration that rewrote stored
+//! `evalhub.eval/1.0` bodies into 2.0 headers, is `evalhub_store`'s). The
 //! relation between them (`core/uses_eval`) is what makes comparison possible:
 //! two Cards that point at the same Eval version measured the same thing.
 //!
@@ -48,6 +50,19 @@
 //! of the Eval record, outside every version: writing a run does not append
 //! a header version. A run records what happened and what was measured
 //! directly; the verdict on it is the Card's (`card::Card::run_results`).
+//!
+//! The runs a Card judged are its *used set*, per Eval it uses: the
+//! `attrs.runs` of its `core/uses_eval` relations, or, without them, every
+//! run neither archived nor deleted when the Card is posted ([`common`],
+//! [`card`]). Four hashes tie the pieces together, all computed by the
+//! hub and none sent by the client: the header's `content_hash`, each
+//! run's `content_hash`, the record's `runs_hash` over every run, and a
+//! used-set hash over the runs a Card used; the formulas are
+//! `evalhub_core`'s. Runs have no visibility of their own and follow their
+//! Eval; a Card's `run_results` follow the Card, except that a reader who
+//! may not see an Eval is never shown the entries that name it. How many
+//! runs a batch and how many `run_results` a Card may carry are the
+//! server's limits, not constraints of these types.
 //!
 //! A Card has no `kind` field. Whether a score came from a judge, an
 //! aggregation, or was transcribed from a paper is not a kind of Card; those

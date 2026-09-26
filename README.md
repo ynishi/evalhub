@@ -12,7 +12,8 @@ does not rewrite what it receives, and never calls anything "verified".
 ## Status
 
 Pre-alpha. The API is complete: records with validation, fingerprints and
-badges, attachments, relations, the query language, the registry and the
+badges, an Eval's runs and their projection with Cards' judgements,
+attachments, relations, the query language, the registry and the
 audit log. The web UI is compiled into the binary; a debug build without it
 serves the API and a placeholder page. Read the design in the crate docs:
 
@@ -60,8 +61,9 @@ Configuration is layered: defaults, then a TOML file (`--config` or
 `EVALHUB_DATABASE__URL`), then flags. `config show --origin` prints every
 key with the layer that set it; secrets are redacted.
 
-What one request may carry is configured under `limits`; a request over a
-limit is refused, never truncated:
+What one request may carry is configured in the `[limits]` table of the
+file (or `EVALHUB_LIMITS__BODY_BYTES` and so on); a request over a limit
+is refused, never truncated:
 
 | Key                  | Default             | Over it                          |
 | -------------------- | ------------------- | -------------------------------- |
@@ -69,15 +71,27 @@ limit is refused, never truncated:
 | `limits.batch_runs`  | `1000`              | `413 batch_too_large` on `runs:batch` |
 | `limits.run_results` | `100000`            | `422 too_many_run_results` on a Card |
 
+```toml
+[limits]
+body_bytes = 16777216
+batch_runs = 1000
+run_results = 100000
+```
+
+Read pages are not configurable: `limit` on the record, run and audit
+listings is 1–200 (default 50), clamped rather than refused.
+
 `serve` refuses to start without a database, and with one it refuses to
 start until `evalhub migrate` has brought the schema current.
 
 ## API
 
 Everything is under `/api/v1`; the contract is `GET /openapi.json` (OpenAPI
-3.1) and the record schemas are `GET /schemas/{card|eval-2|run|eval|error|query}`
-(`eval-2` is the Eval header, `run` one run, `eval` the 0.1.x Eval that
-0.2.0 still accepts).
+3.1) and the record schemas are `GET /schemas/{card|eval-2|run|eval|error|query}`.
+`eval-2` is the Eval header (`evalhub.eval/2.0`) and `run` one run;
+`card` covers `evalhub.card/1.1` and the `evalhub.card/1.0` it still
+accepts; `eval` stays the 0.1.x document (`evalhub.eval/1.0`, with
+`runs[]`) that 0.2.0 still accepts, until 0.3.0 removes it.
 Writes need `Authorization: Bearer <token>` with `write` on the namespace;
 reads of public records need nothing, and private records are `404` to
 anyone the token does not cover. A token acts only in the namespaces it
@@ -102,7 +116,8 @@ covers it.
 0.1.x Eval body (header and `runs[]` in one) on `POST /evals/{ns}/{name}`:
 it is stored as a 2.0 header plus run rows, and the response carries a
 `Deprecation` header, `converted_from: "evalhub.eval/1.0"` and
-`converted_runs`. **0.3.0 removes this**; post the header, then the runs.
+`converted_runs`. **0.3.0 removes this**; post the header, then the runs
+(see Upgrading from 0.1.x, below).
 
 ### Runs
 
@@ -115,10 +130,45 @@ for an Eval the caller may not see. Writes need `write` on the namespace.
 | -------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------- |
 | `PUT`    | `/evals/{ns}/{name}/runs/{run_id}`             | Write one run (`GET /schemas/run`; its `run_id` must equal the path's). `201` created, `200` with `result: updated` or `unchanged`; body `{ run_id, content_hash, status, result, runs_hash }`. `409 run_deleted` for a deleted id, `409 attachment_missing`, `422` otherwise. |
 | `POST`   | `/evals/{ns}/{name}/runs:batch`                | `{ runs: [Run, …] }`, all or nothing: on failure nothing is written and every failing element is listed (`/runs/{index}/…`). `200 { runs: [{ run_id, content_hash, result }], runs_hash }`. More than `limits.batch_runs` is `413 batch_too_large`. |
-| `GET`    | `/evals/{ns}/{name}/runs?cards&where&sort&limit&cursor&include` | Runs × metrics × each named Card's judgements. `cards={ns}/{name}` repeats; `where` is the query grammar as JSON text over run paths (`status`, `error.kind`, `model.id`, `metrics[{id}]`, `results[{card}][{metric}].value`, …); `sort={path}[:asc\|:desc]` repeats; `limit` 1–200; `include=archived,deleted` for members. Per Card: `runs_used`, `used_set_hash`, `changed_since_card`. A Card that is unknown, private to the caller or not using the Eval is `404`. |
+| `GET`    | `/evals/{ns}/{name}/runs?cards&where&sort&limit&cursor&include` | Runs × metrics × each named Card's judgements. `cards={ns}/{name}` repeats; `where` is the query grammar as JSON text over the run paths below; `sort={path}[:asc\|:desc]` repeats, `run_id` is always the last key; `limit` 1–200; `include=archived,deleted` for members. Per Card: `runs_used`, `used_set_hash`, `changed_since_card`. A Card that is unknown, private to the caller or not using the Eval is `404`. |
 | `GET`    | `/evals/{ns}/{name}/runs/{run_id}`             | One run. Archived runs are `404` to non-members; a deleted run is `{ run_id, content_hash, tombstone }`. |
 | `PATCH`  | `/evals/{ns}/{name}/runs/{run_id}`             | `{ "archived": true \| false }`. Hides a run from non-members and the counts; no hash changes. |
 | `DELETE` | `/evals/{ns}/{name}/runs/{run_id}`             | Tombstone with `{ "reason", "note" }`. The body and attachment references go; the id, content hash and metrics stay, and the id is never written again. |
+
+The paths `where` and `sort` accept on `GET …/runs` are the run's, not a
+record's. Parameters are in brackets, because a metric id or a Card
+name contains `/` and may contain `.`; the dotted forms
+(`metrics.core/tokens_out`) are `422 unknown_path` with a hint.
+
+| Path                                   | Type              | Is                                                     |
+| -------------------------------------- | ----------------- | ------------------------------------------------------ |
+| `run_id`, `status`, `error.kind`       | string            | the run's id, `ok` / `error` / `skipped`, the error slug |
+| `started_at`, `ended_at`               | string (RFC 3339) | compared as timestamps; `prefix` / `contains` refused  |
+| `{facet}.{key…}` (`model.id`, `generation.temperature`, `env.git.commit`, …) | as in the schema | the run's own facets (six, no `grading`), header defaults copied in |
+| `fingerprint.{facet}`                  | string            | the run's fingerprint of that facet                    |
+| `metrics[{ns}/{name}]`                 | number            | a metric the run measured; registered or not           |
+| `results[{card}][{metric}].value`      | number            | that Card's judgement of the run; `{card}` must be in `cards=` |
+| `results[{card}][{metric}].label`      | string            | the same, as a label                                   |
+| `ext.*`                                | as for records    | the run's own `ext`; an unregistered key answers `eq` / `exists` only |
+
+Every typed path takes every operator its type allows, sorting
+included: the projection is scoped to one Eval, so facet keys range and
+sort here although they do not in a record query. The one exception is
+an unregistered `ext` key, which is `422 not_indexed` for anything but
+`eq` / `exists`, sorting included. There are no array paths, so no
+`any`.
+
+```bash
+curl -G https://hub.example/api/v1/evals/alice/loop/runs \
+  --data-urlencode 'cards=alice/judge' \
+  --data-urlencode 'where={"and":[{"path":"status","op":"eq","value":"ok"},{"path":"results[alice/judge][core/pass].value","op":"gte","value":1}]}' \
+  --data-urlencode 'sort=metrics[core/tokens_out]:desc' \
+  --data-urlencode 'limit=100'
+```
+
+A page is `{ cards, items, next_cursor }`; pass `next_cursor` back as
+`cursor`. A cursor is bound to the Eval and the `sort` it was issued for
+and is `400` anywhere else.
 
 ### Identity
 
@@ -204,6 +254,39 @@ their `metric_registered` / `harness_registered` badge, on the next sweep.
 `export?format=bundle` is `501`: tarring a record's attachments would
 stream them through the hub, which the presigned-URL design exists to
 avoid, and the alternative has not been chosen yet.
+
+## Upgrading from 0.1.x
+
+0.2.0 moves an Eval's runs out of its body. The versioned body is now a
+header; the runs are rows of the Eval, written by `run_id`, and the
+verdict on a run is the Card's. What a 0.1.x client changes:
+
+| 0.1.x                                                   | 0.2.0                                                                                   |
+| ------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `POST /evals/{ns}/{name}` with `runs[]` in the body     | `POST` the header without `runs`, then `PUT …/runs/{run_id}` per run or `POST …/runs:batch` |
+| `runs[].outcome` (`pass` / `fail` / `error` / `skipped`) | the run's `status` (`ok` / `error` with `error.kind` / `skipped` with `skip_reason`), and the pass / fail on the Card, in `run_results[]` |
+| `"schema": "evalhub.eval/1.0"`                          | `"schema": "evalhub.eval/2.0"` (`GET /schemas/eval-2`)                                   |
+| `"schema": "evalhub.card/1.0"`                          | `"schema": "evalhub.card/1.1"`, which adds `run_results`; `evalhub.card/1.0` is still accepted |
+
+A 1.0 Eval body with `runs[]` is accepted by 0.2.0 only: it is converted
+into a 2.0 header and run rows, and the response carries a `Deprecation`
+header. 0.3.0 refuses it with `422 runs_moved`, as 0.2.0 already refuses a
+2.0 header that carries `runs`. Two things a 1.0 client will notice in
+0.2.0 already:
+
+- the `content_hash` it gets back is the converted 2.0 header's, not the
+  hash of the body it posted;
+- re-posting a body that leaves a run out no longer drops that run. Runs
+  are rows now; archive (`PATCH …/runs/{run_id}`) or delete it.
+
+On a hosted database, `evalhub migrate` for 0.2.0 does the same
+conversion to every stored Eval once (`docs/hosting.md`, "Upgrading to
+0.2.0"). Header `content_hash` values change, with the old and the new
+hash of every version in the audit log (`migration.runs_split`).
+Versions that differed only in `runs` become identical header versions.
+A Card's relations keep resolving, because they point at version ids,
+not hashes, and each Card's used runs are rebuilt from the Eval version
+it points at.
 
 ## Web UI
 
