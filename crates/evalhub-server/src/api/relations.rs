@@ -30,6 +30,21 @@
 //! stored body, so its `content_hash` does not match it: a client that
 //! verifies the hash does so on responses without `withheld`.
 //!
+//! A Card's judgements follow the same rule. Its `run_results[]` elements
+//! name an Eval (`eval: {ns}/{name}`) and one of its runs; for an Eval the
+//! reader may not see, the elements are removed and only their number is
+//! reported, as `withheld.run_results`. The count is all the reader
+//! learns: not the Eval's name, not a run id, not a verdict. (The
+//! `core/uses_eval` edge into that Eval is withheld as a relation at the
+//! same time, with its `attrs.runs`.) Both removals happen whenever either
+//! kind of hidden target exists, on both read paths; the export formats
+//! project neither `relations[]` nor `run_results[]`, so they have nothing
+//! to withhold.
+//!
+//! ```text
+//! withheld: { relations: [{ type, version_id, content_hash }], run_results: <count> }
+//! ```
+//!
 //! A write never learns more than a read. A target the writer may not see
 //! is stored unresolved, like one that does not exist, and the response
 //! and the `refs_resolved` badge are the same in both cases. Reading such
@@ -55,7 +70,21 @@
 //!
 //! The hub does not rank the groups or the Cards in them. `same_harness`
 //! and `same_model` say whether each Card's harness and model fingerprints
-//! equal the Eval's, and that is the whole of its opinion.
+//! equal those of every run the Card used from this Eval (its used set;
+//! with an empty used set, the Eval version's header), and that is the
+//! whole of its opinion.
+//!
+//! # What each Card used
+//!
+//! A Card version records which runs of the Eval it judged and each run's
+//! content hash at posting time (`evalhub_store::used_set`). Each row of
+//! the comparison view reports that as the store computes it:
+//! `runs_used` (how many), `used_set_hash` (`evalhub_core::run::runs_hash`
+//! over the used runs' *current* hashes) and `changed_since_card` (the
+//! used runs overwritten since, by `run_id`). A client that wants to know
+//! whether a Card still describes the runs it names reads
+//! `changed_since_card`; one that wants to verify it recomputes
+//! `used_set_hash` from `GET …/runs`.
 
 use std::collections::BTreeMap;
 
@@ -71,8 +100,8 @@ use evalhub_schema::error::{ErrorCode, ErrorEntry};
 use evalhub_store::auth::Scope;
 use evalhub_store::records::{self, RecordType};
 use evalhub_store::relations::{
-    self, Direction, EdgeEnd, HiddenTarget, RelationTarget, ResolvedTarget, StoredRelation,
-    TraverseParams,
+    self, Direction, EdgeEnd, HiddenEval, HiddenTarget, RelationTarget, ResolvedTarget,
+    StoredRelation, TraverseParams,
 };
 
 use crate::auth::{Auth, MaybeAuth};
@@ -183,8 +212,14 @@ impl From<ResolvedTarget> for TargetDto {
 /// it. Present in an envelope only when something was removed.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct Withheld {
-    /// One entry per removed `relations[]` element, in body order.
+    /// One entry per removed `relations[]` element, in body order. Empty
+    /// when only `run_results[]` elements were removed.
     pub relations: Vec<WithheldRelation>,
+    /// How many `run_results[]` elements were removed because they judge
+    /// runs of an Eval the reader may not see. Only the number: which
+    /// Eval, which runs and what was judged stay hidden. `0` when none
+    /// were.
+    pub run_results: u64,
 }
 
 /// A removed `relations[]` element, reduced to the commitment: the same
@@ -201,16 +236,67 @@ pub struct WithheldRelation {
     pub content_hash: String,
 }
 
-/// Remove from `body.relations[]` every element whose `(type, to)` names
-/// one of `hidden`, and say what was removed. `None` when nothing was.
+/// Remove from `body` what the reader may not see, and say what was
+/// removed. `None` when nothing was, and then `body` is untouched.
 ///
-/// `to` is parsed rather than compared as text, so a spelling the parser
-/// accepts but the stored text does not match (`@01`) is still caught.
-pub fn withhold(body: &mut Value, hidden: &[HiddenTarget]) -> Option<Withheld> {
-    if hidden.is_empty() {
-        return None;
+/// - `relations[]`: every element whose `(type, to)` names one of
+///   `hidden` (`evalhub_store::relations::hidden_targets`), reported as
+///   its commitment. `to` is parsed rather than compared as text, so a
+///   spelling the parser accepts but the stored text does not match
+///   (`@01`) is still caught.
+/// - `run_results[]`: every element whose `eval` is the `{ns}/{name}` of
+///   one of `hidden_evals` (`evalhub_store::relations::hidden_evals`),
+///   reported as a count.
+///
+/// The two inputs are independent: a Card may judge runs of a private
+/// Eval through an edge the reader may see only as a commitment, or have
+/// only one of the two. Callers pass whatever the store found for the
+/// version, empty slices included, and redaction happens when either is
+/// non-empty.
+pub fn withhold(
+    body: &mut Value,
+    hidden: &[HiddenTarget],
+    hidden_evals: &[HiddenEval],
+) -> Option<Withheld> {
+    let relations = withhold_relations(body, hidden);
+    let run_results = withhold_run_results(body, hidden_evals);
+    (!relations.is_empty() || run_results > 0).then_some(Withheld {
+        relations,
+        run_results,
+    })
+}
+
+/// The `run_results[]` half of [`withhold`]: the number removed.
+fn withhold_run_results(body: &mut Value, hidden_evals: &[HiddenEval]) -> u64 {
+    if hidden_evals.is_empty() {
+        return 0;
     }
-    let elements = body.get_mut("relations")?.as_array_mut()?;
+    let Some(elements) = body.get_mut("run_results").and_then(Value::as_array_mut) else {
+        return 0;
+    };
+    let before = elements.len();
+    elements.retain(|element| {
+        let Some((ns, name)) = element
+            .get("eval")
+            .and_then(Value::as_str)
+            .and_then(|e| e.split_once('/'))
+        else {
+            return true;
+        };
+        !hidden_evals.iter().any(|h| h.ns == ns && h.name == name)
+    });
+    u64::try_from(before - elements.len()).unwrap_or(u64::MAX)
+}
+
+/// The `relations[]` half of [`withhold`]: the commitments of what was
+/// removed, in body order.
+fn withhold_relations(body: &mut Value, hidden: &[HiddenTarget]) -> Vec<WithheldRelation> {
+    if hidden.is_empty() {
+        return Vec::new();
+    }
+    let Some(elements) = body.get_mut("relations").and_then(Value::as_array_mut) else {
+        return Vec::new();
+    };
     let mut removed = Vec::new();
     elements.retain(|element| {
         let Some(relation_type) = element.get("type").and_then(Value::as_str) else {
@@ -241,7 +327,7 @@ pub fn withhold(body: &mut Value, hidden: &[HiddenTarget]) -> Option<Withheld> {
             None => true,
         }
     });
-    (!removed.is_empty()).then_some(Withheld { relations: removed })
+    removed
 }
 
 /// An edge as returned by `POST …/relations`.
@@ -387,10 +473,20 @@ pub struct ComparisonRowDto {
     pub content_hash: String,
     /// Per-facet fingerprints, hex, keyed by facet name.
     pub fingerprints: BTreeMap<String, String>,
-    /// The Card's harness fingerprint equals the Eval's.
+    /// The Card's harness fingerprint equals that of every run in its used
+    /// set for this Eval (with an empty used set, the Eval version's
+    /// header fingerprint). `false` when any differs or is missing.
     pub same_harness: bool,
-    /// The Card's model fingerprint equals the Eval's.
+    /// As `same_harness`, for the model fingerprint.
     pub same_model: bool,
+    /// How many runs of this Eval the Card version used (its used set).
+    pub runs_used: i64,
+    /// Hex `evalhub_core::run::runs_hash` over the used runs' current
+    /// content hashes. It changes exactly when a used run is overwritten.
+    pub used_set_hash: String,
+    /// The used runs overwritten since the Card was posted, by `run_id`
+    /// ascending. Empty when the Card still describes the runs it judged.
+    pub changed_since_card: Vec<String>,
 }
 
 /// Cards sharing one fingerprint of the facet named in `group_by`.
@@ -663,6 +759,9 @@ pub async fn eval_cards(
             fingerprints: hex_map(r.fingerprints),
             same_harness: r.same_harness,
             same_model: r.same_model,
+            runs_used: r.runs_used,
+            used_set_hash: hex::encode(r.used_set_hash),
+            changed_since_card: r.changed_since_card,
         })
         .collect();
 

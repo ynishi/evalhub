@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::body::{Body, to_bytes};
-use axum::http::{Method, Request, StatusCode, header};
+use axum::http::{HeaderMap, Method, Request, StatusCode, header};
 use serde_json::{Value, json};
 use testcontainers_modules::postgres::Postgres;
 use testcontainers_modules::testcontainers::core::{ContainerPort, ExecCommand, Mount, WaitFor};
@@ -26,6 +26,14 @@ use evalhub_store::objects::{ObjectConfig, Objects};
 
 pub const CARD: &str = include_str!("../../../evalhub-schema/fixtures/card-complete.json");
 pub const EVAL: &str = include_str!("../../../evalhub-schema/fixtures/eval-run-set.json");
+/// The 0.1.x Eval shape, header and `runs[]` in one body.
+pub const EVAL_V1: &str = include_str!("../../../evalhub-schema/fixtures/eval-run-set-v1.json");
+/// One run, `r1`, with two attachments and two metrics.
+pub const RUN: &str = include_str!("../../../evalhub-schema/fixtures/run.json");
+/// A Card judging runs `r1` and `r2` of `alice/single2-k4@3` through
+/// `run_results`. [`Hub::post_card_with_runs`] aims it at a real Eval.
+pub const CARD_RUN_RESULTS: &str =
+    include_str!("../../../evalhub-schema/fixtures/card-run-results.json");
 
 pub struct Hub {
     _container: ContainerAsync<Postgres>,
@@ -58,15 +66,21 @@ impl Hub {
     /// A hub with a database and no object store: the attachment
     /// endpoints answer `503`.
     pub async fn start() -> Self {
-        Self::build(false).await
+        Self::build(false, |_| {}).await
     }
 
     /// A hub with a database and a MinIO behind the attachment endpoints.
     pub async fn start_with_storage() -> Self {
-        Self::build(true).await
+        Self::build(true, |_| {}).await
     }
 
-    async fn build(with_storage: bool) -> Self {
+    /// A hub with a database, no object store, and a configuration the
+    /// test adjusts (the `limits.*` tests set small limits).
+    pub async fn start_with_config(configure: impl FnOnce(&mut Config)) -> Self {
+        Self::build(false, configure).await
+    }
+
+    async fn build(with_storage: bool, configure: impl FnOnce(&mut Config)) -> Self {
         let container = Postgres::default()
             .with_tag("16")
             .start()
@@ -80,6 +94,7 @@ impl Hub {
         evalhub_store::pool::migrate(&pool).await.expect("migrate");
 
         let mut config = Config::default();
+        configure(&mut config);
         let (minio, objects) = if with_storage {
             let (minio, endpoint) = start_minio().await;
             config.s3 = S3 {
@@ -178,6 +193,18 @@ impl Hub {
         token: Option<&str>,
         body: Option<&str>,
     ) -> (StatusCode, Value) {
+        let (status, _, json) = self.call_full(method, path, token, body).await;
+        (status, json)
+    }
+
+    /// Like [`Hub::call`], with the response headers.
+    pub async fn call_full(
+        &self,
+        method: Method,
+        path: &str,
+        token: Option<&str>,
+        body: Option<&str>,
+    ) -> (StatusCode, HeaderMap, Value) {
         let mut req = Request::builder().method(method).uri(path);
         if let Some(t) = token {
             req = req.header(header::AUTHORIZATION, format!("Bearer {t}"));
@@ -191,9 +218,86 @@ impl Hub {
         .unwrap();
         let res = self.app.clone().oneshot(req).await.unwrap();
         let status = res.status();
+        let headers = res.headers().clone();
         let bytes = to_bytes(res.into_body(), 1 << 20).await.unwrap();
         let json = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
-        (status, json)
+        (status, headers, json)
+    }
+
+    /// `PUT` [`RUN`] into `eval` (`{ns}/{name}`) as `run_id`, with its
+    /// attachments seeded `ready` and `metrics` replaced by `metrics`.
+    /// Returns the status and the response.
+    pub async fn put_run(
+        &self,
+        token: &str,
+        eval: &str,
+        run_id: &str,
+        metrics: Value,
+    ) -> (StatusCode, Value) {
+        self.ready_attachments(RUN).await;
+        let mut run: Value = serde_json::from_str(RUN).unwrap();
+        run["run_id"] = json!(run_id);
+        run["metrics"] = metrics;
+        self.call(
+            Method::PUT,
+            &format!("/api/v1/evals/{eval}/runs/{run_id}"),
+            Some(token),
+            Some(&run.to_string()),
+        )
+        .await
+    }
+
+    /// Post [`CARD_RUN_RESULTS`] as `card` (`{ns}/{name}`), judging the
+    /// runs `r1` and `r2` of `eval` (`{ns}/{name}`, which must already
+    /// have a live header the writer may see).
+    ///
+    /// The runs are `PUT` first (from [`RUN`]), because a Card may only
+    /// judge runs that exist when it is posted; then the fixture's
+    /// `core/uses_eval` edge is pointed at `eval`'s latest version and its
+    /// `run_results[].eval` at `eval`. Returns the Card post's status and
+    /// response.
+    pub async fn post_card_with_runs(
+        &self,
+        token: &str,
+        eval: &str,
+        card: &str,
+    ) -> (StatusCode, Value) {
+        for (run_id, tokens) in [("r1", 1834.0), ("r2", 2210.0)] {
+            let (status, body) = self
+                .put_run(
+                    token,
+                    eval,
+                    run_id,
+                    json!({"core/duration_ms": 131000.0, "core/tokens_out": tokens}),
+                )
+                .await;
+            assert!(
+                status.is_success(),
+                "PUT {eval}/runs/{run_id}: {status} {body}"
+            );
+        }
+        let (status, env) = self
+            .call(
+                Method::GET,
+                &format!("/api/v1/evals/{eval}"),
+                Some(token),
+                None,
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{env}");
+        let seq = env["seq"].as_i64().unwrap();
+        let mut body: Value = serde_json::from_str(CARD_RUN_RESULTS).unwrap();
+        body["relations"][0]["to"] = json!(format!("{eval}@{seq}"));
+        for r in body["run_results"].as_array_mut().unwrap() {
+            r["eval"] = json!(eval);
+        }
+        self.call(
+            Method::POST,
+            &format!("/api/v1/cards/{card}"),
+            Some(token),
+            Some(&body.to_string()),
+        )
+        .await
     }
 
     /// Like [`Hub::call`] but keeps the body as text, for responses that

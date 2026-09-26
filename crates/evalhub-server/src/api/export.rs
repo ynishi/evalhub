@@ -7,6 +7,12 @@
 //!   Card that references a private Eval, the bundle carries the Eval's
 //!   `version_id` and attachment sha256s but not the bytes.
 //!
+//! Neither format carries a Card's `run_results`, and neither may start
+//! to without the redaction the read paths apply (`withhold` in
+//! `crate::api::relations`): a judgement names an Eval and one of its
+//! runs, and for an Eval the reader may not see, both are withheld.
+//! `hf-model-index` projects `results`, `model` and `task` only.
+//!
 //! # `hf-model-index`
 //!
 //! The projection is deliberately lossy and one-way. A Card carries seven

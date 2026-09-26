@@ -11,16 +11,59 @@
 //!   "record": { ...the canonical body... },
 //!   "fingerprints": { "model": "…", ... },      // expand=fingerprints
 //!   "relations": [...],                          // expand=relations
-//!   "withheld": { "relations": [...] },          // elements removed for this reader
-//!   "tombstone": { "at", "reason", "note" }      // when tombstoned; record is absent
+//!   "withheld": { "relations": [...], "run_results": n },  // removed for this reader
+//!   "tombstone": { "at", "reason", "note" },     // when tombstoned; record is absent
+//!   "runs": { "count", "by_status", "archived", "deleted", "runs_hash" },  // an Eval's GET
+//!   "converted_from": "evalhub.eval/1.0",        // a POST of a 1.0 Eval body
+//!   "converted_runs": { "runs": [...], "runs_hash" }
 //! }
 //! ```
 //!
 //! `withheld` is set when the reader may not see a version the record's
-//! `relations[]` points at: the element is removed from `record` and
-//! listed there as a commitment (`crate::api::relations` has the rule).
-//! `record` then differs from the stored body and `content_hash` does not
-//! match it.
+//! `relations[]` points at, or (a Card) an Eval its `run_results[]`
+//! judges: the relation is removed from `record` and listed there as a
+//! commitment, the judgements are removed and counted
+//! (`crate::api::relations` has the rule). `record` then differs from the
+//! stored body and `content_hash` does not match it.
+//!
+//! # An Eval's runs
+//!
+//! An Eval is a header plus runs that belong to the record
+//! (`crate::api::runs`). The header is what this module stores and
+//! returns as `record`; since 0.2.0 it has no `runs` key. `GET` of an Eval
+//! adds `runs`, the summary of its runs (`evalhub_store::records::runs_summary`):
+//! `count` and `by_status` over the runs neither archived nor deleted,
+//! `runs_hash` over every run, and `archived` / `deleted` counts for
+//! members of the namespace only. It is the same whichever `@seq` or
+//! `@label` is read, tombstoned versions included, because runs are not
+//! versioned; tombstoning a version touches no run.
+//!
+//! # The `evalhub.eval/1.0` body (until 0.3.0)
+//!
+//! An `evalhub.eval/2.0` body with a `runs` key is `422` with the single
+//! error `runs_moved` (from `evalhub_core::validate`, ahead of every other
+//! error). An `evalhub.eval/1.0` body, header and `runs[]` in one, is
+//! still accepted in release 0.2.0, for one release, as the schema crate
+//! promises for a previous major: the store splits it
+//! (`evalhub_core::eval::split_v1`) into a 2.0 header, stored as the
+//! version, and run rows written as by `POST …/runs:batch`, in one
+//! transaction. The response carries `Deprecation: @1790294400` (RFC 9745:
+//! deprecated since 2026-09-25, when the 2.0 header replaced it),
+//! `converted_from: "evalhub.eval/1.0"`, the stored header's
+//! `content_hash` (not the hash of the body as sent), and
+//! `converted_runs`, the runs as a batch reports them. Posting the same
+//! 1.0 body again is `200` with every run `unchanged`. A refused run
+//! refuses the whole post, its entries prefixed `/runs/{index}` of the
+//! posted `runs[]`. **0.3.0 removes this**: a 1.0 body will then be
+//! refused like any unknown `schema`.
+//!
+//! # A Card's `run_results`
+//!
+//! A Card version may carry at most `limits.run_results` judgements; more
+//! is `422 too_many_run_results`, counted on the parsed body before it is
+//! validated or the store is called. Whether each judged run exists and
+//! is in the Card's used set is the store's check (`run_unknown`,
+//! `run_not_in_used_set`, `422`).
 //!
 //! `POST` semantics — idempotent on `content_hash`, new `seq` otherwise —
 //! are in `evalhub_store::records`. `?label=` on `POST` labels the new
@@ -68,7 +111,7 @@ use std::collections::BTreeMap;
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -299,6 +342,19 @@ pub struct VersionEnvelope {
     /// Present when the version was withdrawn; `record` is then absent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tombstone: Option<TombstoneDto>,
+    /// An Eval's runs, summarised, on `GET`. The runs belong to the
+    /// record, so this is the same at every `@seq`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runs: Option<crate::api::runs::RunsSummaryDto>,
+    /// On a `POST` of an `evalhub.eval/1.0` body: the schema the body
+    /// declared. The stored version is the `evalhub.eval/2.0` header split
+    /// from it, and `content_hash` is that header's. Accepted until 0.3.0.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub converted_from: Option<String>,
+    /// On a `POST` of an `evalhub.eval/1.0` body: its `runs[]`, written as
+    /// run rows, reported as `POST …/runs:batch` reports runs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub converted_runs: Option<crate::api::runs::ConvertedRunsDto>,
 }
 
 impl VersionEnvelope {
@@ -327,6 +383,9 @@ impl VersionEnvelope {
             relations: None,
             withheld: None,
             tombstone: None,
+            runs: None,
+            converted_from: None,
+            converted_runs: None,
         }
     }
 
@@ -436,6 +495,27 @@ fn decode_sha(hex_str: &str, path: String) -> Result<[u8; 32], ErrorEntry> {
     }
 }
 
+/// `Deprecation` on the response to an `evalhub.eval/1.0` post: an RFC
+/// 9745 structured date, 2026-09-25T00:00:00Z, the day `evalhub.eval/2.0`
+/// replaced it.
+pub const EVAL_V1_DEPRECATION: &str = "@1790294400";
+
+/// `run_results[]` of a Card body above the configured limit, as the one
+/// error to answer with. Counted on the parsed body, before validation.
+fn too_many_run_results(body: &Value, max: usize) -> Option<ErrorEntry> {
+    let n = body.get("run_results").and_then(Value::as_array)?.len();
+    (n > max).then(|| {
+        entry(
+            "/run_results".to_string(),
+            ErrorCode::TooManyRunResults,
+            format!(
+                "{n} run_results in one Card version; the limit is {max} (limits.run_results). \
+                 Split the judgements across Cards."
+            ),
+        )
+    })
+}
+
 async fn post(
     record_type: RecordType,
     state: AppState,
@@ -443,7 +523,7 @@ async fn post(
     path: RecordPath,
     query: PostQuery,
     body: Value,
-) -> Result<(StatusCode, Json<VersionEnvelope>), ApiError> {
+) -> Result<(StatusCode, HeaderMap, Json<VersionEnvelope>), ApiError> {
     let Auth(caller) = caller;
     if !caller.allows(&path.ns, Scope::Write) {
         return Err(ApiError::Forbidden);
@@ -457,6 +537,11 @@ async fn post(
         return Err(ApiError::BadRequest);
     }
     let kind = kind_of(record_type);
+    if record_type == RecordType::Card
+        && let Some(e) = too_many_run_results(&body, state.config.limits.run_results)
+    {
+        return Err(ApiError::Validation(vec![e]));
+    }
 
     let mut errors = evalhub_core::validate(kind, &body);
     // sha256 values are decoded here because the store needs the bytes;
@@ -596,7 +681,7 @@ async fn post(
     };
 
     let readable_ns = caller.namespaces();
-    let outcome = records::create_or_append(
+    let ingested = records::ingest(
         state.db()?,
         NewVersion {
             record_type,
@@ -617,7 +702,7 @@ async fn post(
     )
     .await;
 
-    let outcome = match outcome {
+    let ingested = match ingested {
         Ok(o) => o,
         Err(StoreError::AttachmentMissing(missing)) => {
             let errors = shas
@@ -637,15 +722,18 @@ async fn post(
         Err(e) => return Err(e.into()),
     };
 
-    Ok(match outcome {
-        CreateOutcome::Created { meta, .. } => (
-            StatusCode::CREATED,
-            Json(VersionEnvelope::from_meta(meta, None)),
-        ),
-        CreateOutcome::Existing(meta) => {
-            (StatusCode::OK, Json(VersionEnvelope::from_meta(meta, None)))
-        }
-    })
+    let (status, meta) = match ingested.outcome {
+        CreateOutcome::Created { meta, .. } => (StatusCode::CREATED, meta),
+        CreateOutcome::Existing(meta) => (StatusCode::OK, meta),
+    };
+    let mut env = VersionEnvelope::from_meta(meta, None);
+    let mut headers = HeaderMap::new();
+    if let Some(converted) = ingested.converted {
+        headers.insert("deprecation", HeaderValue::from_static(EVAL_V1_DEPRECATION));
+        env.converted_from = Some(converted.converted_from.to_string());
+        env.converted_runs = Some(converted.into());
+    }
+    Ok((status, headers, Json(env)))
 }
 
 async fn get(
@@ -671,13 +759,28 @@ async fn get(
     }
     .ok_or(ApiError::NotFound)?;
     let version_id = stored.meta.version_id;
+    let record_id = stored.meta.record_id;
     let mut env = VersionEnvelope::from_stored(stored);
     if let Some(record) = env.record.as_mut() {
+        // Redact when the reader may not see a relation's target or (a
+        // Card) an Eval its run_results judge; either is enough.
         let hidden =
             evalhub_store::relations::hidden_targets(pool, &[version_id], &caller_ns).await?;
-        env.withheld = hidden
-            .get(&version_id)
-            .and_then(|h| crate::api::relations::withhold(record, h));
+        let hidden_evals = match record_type {
+            RecordType::Card => {
+                evalhub_store::relations::hidden_evals(pool, &[version_id], &caller_ns).await?
+            }
+            RecordType::Eval => Default::default(),
+        };
+        env.withheld = crate::api::relations::withhold(
+            record,
+            hidden.get(&version_id).map_or(&[], Vec::as_slice),
+            hidden_evals.get(&version_id).map_or(&[], Vec::as_slice),
+        );
+    }
+    if record_type == RecordType::Eval {
+        let member = caller_ns.contains(&path.ns);
+        env.runs = Some(records::runs_summary(pool, record_id, member).await?.into());
     }
     let expand: Vec<&str> = query
         .expand
@@ -887,7 +990,7 @@ macro_rules! record_handlers {
             Path(path): Path<RecordPath>,
             Query(query): Query<PostQuery>,
             Json(body): Json<Value>,
-        ) -> Result<(StatusCode, Json<VersionEnvelope>), ApiError> {
+        ) -> Result<(StatusCode, HeaderMap, Json<VersionEnvelope>), ApiError> {
             post($rt, state, caller, path, query, body).await
         }
 

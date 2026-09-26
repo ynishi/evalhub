@@ -5,6 +5,7 @@
 //! | [`meta`]                 | `GET /openapi.json`, `GET /schemas/{name}`, `GET /whoami`, `GET /healthz`                                   |
 //! | [`auth`]                 | `POST,DELETE /session`, `GET,POST,DELETE /tokens`, `GET /namespaces/{ns}`, `GET,POST,DELETE /orgs/{org}/members` |
 //! | [`records`]              | `POST /{cards\|evals}/{ns}/{name}?label=`, `GET …/{name}[@{seq}\|@{label}]?expand=`, `GET …/versions`, `DELETE …@{…}`, `PATCH …@{…}/label`, `PATCH …/settings`, `GET /{cards\|evals}?ns&search&sort&cursor` |
+//! | [`runs`]                 | `PUT,GET,PATCH,DELETE /evals/{ns}/{name}/runs/{run_id}`, `POST /evals/{ns}/{name}/runs:batch`, `GET /evals/{ns}/{name}/runs?cards&where&sort&limit&cursor&include` |
 //! | [`attachments`]          | `POST /attachments`, `POST /attachments/{sha256}/complete`, `HEAD,GET /attachments/{sha256}` (GET → 302)    |
 //! | [`query`]                | `POST /{cards\|evals}/query`                                                                                |
 //! | [`relations`]            | `GET …/{name}/relations?direction&types&depth&follow_latest&version`, `POST …@{…}/relations`, `GET /evals/{ns}/{name}/cards?version&group_by` |
@@ -14,10 +15,23 @@
 //!
 //! Statuses: `201` created, `202` accepted (an `ext_schema` whose indexes
 //! are building), `200` idempotent hit or read, `409`
-//! (`attachment_missing`, `label_in_use`, `registry_entry_exists`), `422`
+//! (`attachment_missing`, `label_in_use`, `registry_entry_exists`,
+//! `run_deleted`), `413` (`body_too_large`, `batch_too_large`), `422`
 //! (`errors[]`), `404` (including private), `403` (scope), `401` (token),
 //! `400` (not JSON, bad cursor), `501` (a format the hub has not decided
 //! on), `503` (a capability this deployment lacks). See [`crate::error`].
+//!
+//! # Request size
+//!
+//! [`router`] puts axum's `DefaultBodyLimit` at `limits.body_bytes` (16
+//! MiB by default; axum's own default, 2 MiB, was the effective cap before
+//! 0.2.0) on every route, so every extractor that buffers a body refuses a
+//! larger one. axum answers that refusal with `413` and a plain-text body;
+//! [`body_too_large`] rewrites it into the error envelope with
+//! `body_too_large`, so every `413` the hub sends has the one shape. The
+//! handlers' own `413` (`batch_too_large`) is already an envelope and
+//! passes through. The other limits are the handlers': the batch count in
+//! [`runs`], the `run_results` count in [`records`].
 //!
 //! Handlers are thin: extract, authorise, call the store or core, map the
 //! result. Rules live in the library crates so that they are the same for
@@ -30,10 +44,13 @@
 use std::sync::Arc;
 
 use aide::axum::ApiRouter;
-use aide::axum::routing::{delete_with, get_with, patch_with, post_with};
+use aide::axum::routing::{delete_with, get_with, patch_with, post_with, put_with};
 use aide::transform::TransformOperation;
 use axum::Json;
 use axum::Router;
+use axum::extract::DefaultBodyLimit;
+use axum::http::{StatusCode, header};
+use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use tower_http::trace::TraceLayer;
 
@@ -52,6 +69,7 @@ pub mod query;
 pub mod records;
 pub mod registry;
 pub mod relations;
+pub mod runs;
 
 /// Build the application router and the OpenAPI document it describes.
 ///
@@ -281,10 +299,88 @@ pub fn router(
                     .description(
                         "Every visible Card whose latest live version has a \
                          `core/uses_eval` edge to this Eval version, with its per-facet \
-                         fingerprints and whether its harness and model match the Eval's. \
-                         `group_by=fingerprint.{facet}` groups them by that fingerprint. \
-                         The hub lines the Cards up; it does not rank them.",
+                         fingerprints, whether its harness and model match those of every \
+                         run it used, and its used set: `runs_used`, `used_set_hash` and \
+                         `changed_since_card`. `group_by=fingerprint.{facet}` groups them \
+                         by that fingerprint. The hub lines the Cards up; it does not rank \
+                         them.",
                     )
+            }),
+        )
+        .api_route(
+            "/evals/{ns}/{name}/runs",
+            get_with(runs::list_runs, |op| {
+                op.id("list_runs")
+                    .summary("The runs of an Eval, with Cards' judgements")
+                    .description(
+                        "One page of the Eval's runs: status, error kind, times, metrics and \
+                         fingerprints, and for each Card named in `cards=` its judgements of \
+                         each run and its used set (`runs_used`, `used_set_hash`, \
+                         `changed_since_card`). `where` is the query grammar as JSON text \
+                         over the run paths; `sort` is `{path}[:asc|:desc]`, repeatable. \
+                         Archived and deleted runs are left out unless a member asks with \
+                         `include=archived,deleted`. A Card that is unknown, invisible or \
+                         does not use this Eval is `404`, as is a private Eval.",
+                    )
+            }),
+        )
+        .api_route(
+            "/evals/{ns}/{name}/runs:batch",
+            post_with(runs::batch_runs, |op| {
+                op.id("batch_runs")
+                    .summary("Write several runs, all or nothing")
+                    .description(
+                        "`{ runs: [Run, …] }`, each carrying its own `run_id`. Every \
+                         element is checked as by `PUT …/runs/{run_id}`, in one \
+                         transaction: if any fails, nothing is written and every failing \
+                         element is listed, its entries' paths prefixed with \
+                         `/runs/{index}` (`422`, or `409` when every entry is \
+                         `run_deleted` / `attachment_missing`). More than \
+                         `limits.batch_runs` runs is `413 batch_too_large`.",
+                    )
+            }),
+        )
+        .api_route(
+            "/evals/{ns}/{name}/runs/{run_id}",
+            put_with(runs::put_run, |op| {
+                op.id("put_run")
+                    .summary("Write one run")
+                    .description(
+                        "Creates (`201`) or overwrites (`200`, `result: updated`) the run; \
+                         identical content is `200` with `result: unchanged` and writes \
+                         nothing. Facets the run omits are copied from the latest header. \
+                         The body's `run_id` must equal the path's (`run_id_mismatch`). A \
+                         deleted run id is `409 run_deleted`; an attachment not uploaded \
+                         and confirmed is `409 attachment_missing`. Needs `write` on `ns`.",
+                    )
+                    .response_with::<201, Json<runs::RunWrittenDto>, _>(|r| {
+                        r.description("The run was created.")
+                    })
+                    .response_with::<200, Json<runs::RunWrittenDto>, _>(|r| {
+                        r.description("The run was overwritten, or already had this content.")
+                    })
+            })
+            .get_with(runs::get_run, |op| {
+                op.id("get_run").summary("Read one run").description(
+                    "The stored run. An archived run is `404` to anyone who is not a member \
+                         of the namespace; a deleted run is `{ run_id, content_hash, \
+                         tombstone }`.",
+                )
+            })
+            .patch_with(runs::patch_run, |op| {
+                op.id("patch_run")
+                    .summary("Archive or unarchive a run")
+                    .description(
+                        "`{ archived }`. An archived run is kept whole and counted in \
+                         `runs_hash`, and hidden from everyone but members. No hash changes.",
+                    )
+            })
+            .delete_with(runs::delete_run, |op| {
+                op.id("delete_run").summary("Delete a run").description(
+                    "Tombstones the run with `{ reason, note }`: the body and its \
+                         attachment references go, the run id, content hash and metrics stay, \
+                         and the id is never written again. Deleting twice is `409 run_deleted`.",
+                )
             }),
         )
         .api_route(
@@ -366,11 +462,38 @@ pub fn router(
         path_tables,
     };
 
+    let body_limit = state.config.limits.body_bytes;
     app.route("/openapi.json", get(meta::openapi))
         .route("/schemas/{name}", get(meta::schema))
         .fallback(crate::embed::fallback)
+        .layer(DefaultBodyLimit::max(body_limit))
+        .layer(axum::middleware::map_response(body_too_large))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
+}
+
+/// Rewrite axum's plain-text `413` (a body above `DefaultBodyLimit`) into
+/// the error envelope with `body_too_large`. A `413` that already is JSON
+/// (the handlers' `batch_too_large`) is left alone, as is every other
+/// response.
+pub async fn body_too_large(response: Response) -> Response {
+    if response.status() != StatusCode::PAYLOAD_TOO_LARGE {
+        return response;
+    }
+    let is_json = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.starts_with("application/json"));
+    if is_json {
+        return response;
+    }
+    crate::error::ApiError::TooLarge(vec![evalhub_schema::error::ErrorEntry {
+        path: String::new(),
+        code: evalhub_schema::error::ErrorCode::BodyTooLarge,
+        hint: Some("the request body is larger than limits.body_bytes".to_string()),
+    }])
+    .into_response()
 }
 
 /// The relation routes both record groups have.
@@ -606,7 +729,13 @@ fn post_record_docs(op: TransformOperation<'_>) -> TransformOperation<'_> {
         "Validates the body, canonicalises it and stores it as the next version \
          of `{ns}/{name}`, creating the name if needed. Requires a token with \
          `write` on `ns`. If the canonical body equals the latest version's, \
-         that version is returned with `200` and nothing is written.",
+         that version is returned with `200` and nothing is written. An \
+         `evalhub.eval/2.0` body carrying `runs` is `422 runs_moved`: runs are \
+         written with `PUT …/runs/{run_id}` or `POST …/runs:batch`. An \
+         `evalhub.eval/1.0` body is still accepted until 0.3.0: it is stored as \
+         a 2.0 header plus run rows, and the response carries a `Deprecation` \
+         header, `converted_from` and `converted_runs`. A Card with more \
+         `run_results` than `limits.run_results` is `422 too_many_run_results`.",
     )
     .response_with::<201, Json<records::VersionEnvelope>, _>(|r| {
         r.description("A new version was stored.")

@@ -3,9 +3,16 @@
 //!
 //! The log answers "who changed what, when" for one namespace: record
 //! creation and version appends, tombstones, label and visibility changes,
-//! relation additions, token issue and revocation, organisation membership.
-//! Rows are newest first and paged by an opaque cursor, like every other
-//! listing.
+//! relation additions, token issue and revocation, organisation membership,
+//! and every run write that changed something (`run.create`, `run.update`,
+//! `run.archive`, `run.unarchive`, `run.delete`, subject
+//! `eval/{ns}/{name}/runs/{run_id}`). The rows `evalhub migrate` writes
+//! (`migration.runs_split` with each rewritten Eval version's old and new
+//! `content_hash`, `migration.card_runs_unmatched`) carry the namespace
+//! they concern and no actor, and are listed with the rest. The handler
+//! filters by namespace only, never by action, so an action the store
+//! adds appears here without a change. Rows are newest first and paged by
+//! an opaque cursor, like every other listing.
 
 use axum::Json;
 use axum::extract::{Query, State};
