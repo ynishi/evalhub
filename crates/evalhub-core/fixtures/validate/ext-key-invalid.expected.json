@@ -1,0 +1,14 @@
+[
+  {
+    "path": "/ext/foo bar",
+    "code": "ext_key_invalid"
+  },
+  {
+    "path": "/ext/notes",
+    "code": "ext_key_invalid"
+  },
+  {
+    "path": "/grading/ext/bad",
+    "code": "ext_key_invalid"
+  }
+]

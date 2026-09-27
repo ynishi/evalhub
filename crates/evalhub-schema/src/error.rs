@@ -21,6 +21,7 @@
 //! | `attachment_ref_unknown` | 422    | `samples_ref` / `calls` / `artifacts[]` / `error.log` not in `attachments[].path` |
 //! | `attachment_path_invalid`| 422    | duplicate, `..`, or absolute `attachments[].path`                    |
 //! | `metric_id_invalid`      | 422    | `results[].metric`, `run_results[].metric` or a run's `metrics` key not of the form `{ns}/{name}` |
+//! | `ext_key_invalid`        | 422    | a key of `ext` (top-level or in a facet) not of the form `{ns}/{name}` |
 //! | `type_mismatch`          | 422    | query: operator applied to a path of another type                    |
 //! | `not_indexed`            | 422    | query: operator needs an index the path does not have                |
 //! | `unknown_path`           | 422    | query: path not in the schema                                        |
@@ -49,7 +50,9 @@
 //! is not JSON.
 //!
 //! Codes are added, never renamed or reused. A client switching on `code`
-//! must treat an unknown code as a generic 422.
+//! must treat an unknown code as a generic 422. The enum is
+//! `#[non_exhaustive]` for the same reason: a release may add a code, and a
+//! `match` in another crate must have a fallback arm for it.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -57,6 +60,7 @@ use serde::{Deserialize, Serialize};
 /// The closed set of error codes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ErrorCode {
     /// JSON Schema violation: unknown key, wrong type, missing required key.
     Schema,
@@ -73,6 +77,9 @@ pub enum ErrorCode {
     /// A `results[].metric`, a `run_results[].metric` or a key of a run's
     /// `metrics` is not of the form `{ns}/{name}`.
     MetricIdInvalid,
+    /// A key of `ext`, at the top level of a record or a run or inside one
+    /// of its facets, is not of the form `{ns}/{name}`.
+    ExtKeyInvalid,
     /// Query: operator applied to a path of another type.
     TypeMismatch,
     /// Query: operator needs an index the path does not have.

@@ -6,12 +6,7 @@
     "started_at": "2026-09-20T10:00:00Z",
     "ended_at": "2026-09-20T10:02:11Z",
     "model": {
-      "id": "qwen3.6-32b",
-      "ext": {
-        "alice/notes": {
-          "n": 1
-        }
-      }
+      "id": "qwen3.6-32b"
     },
     "generation": {
       "temperature": 0.0
@@ -39,9 +34,9 @@
       "core/tokens_out": 1834.0
     },
     "ext": {
-      "alice/qwen-loop": {
-        "rung": 4
-      }
+      "notes": {},
+      "Core/x": {},
+      "alice/ok": {}
     },
     "meta": {
       "worker": "gpu-3"
