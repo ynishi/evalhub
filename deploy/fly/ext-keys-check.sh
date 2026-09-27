@@ -21,4 +21,7 @@ database=${EVALHUB_FLY_DATABASE:-${app//-/_}}
 fly auth whoami >/dev/null
 
 echo "ext keys outside {ns}/{name} on $db_app/$database:"
-fly postgres connect --app "$db_app" --database "$database" < deploy/fly/ext-keys.sql
+# psql stays at its prompt after the file's last statement, so the session
+# is closed explicitly; without the `\q` the script waits on it forever.
+{ cat deploy/fly/ext-keys.sql; printf '\\q\n'; } \
+    | fly postgres connect --app "$db_app" --database "$database"
