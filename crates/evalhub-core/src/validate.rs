@@ -83,6 +83,7 @@
 //! | `run_results[].eval` is the `{ns}/{name}` of a `core/uses_eval` relation's target      | `run_results_eval_unknown` |
 //! | `relations[].type` matches `{ns}/{name}`                                               | `schema`                   |
 //! | `relations[].to` is `{ns}/{name}@{seq}`, `external:…`, or `hf:…`                       | `schema`                   |
+//! | every key of `ext`, and of each facet's `ext`, matches `{ns}/{name}`                   | `ext_key_invalid`          |
 //!
 //! `run_results[].eval` is compared with the target of each of the Card's
 //! `core/uses_eval` relations *without* its `@{seq}`: runs belong to the
@@ -111,11 +112,14 @@
 //! | `calls`, `artifacts[]`, `error.log` each name an `attachments[].path` of the run       | `attachment_ref_unknown`   |
 //! | the run's `attachments[].path` unique, relative, contains no `..`                      | `attachment_path_invalid`  |
 //! | every key of `metrics` matches `{ns}/{name}`                                           | `metric_id_invalid`        |
+//! | every key of `ext`, and of each facet's `ext`, matches `{ns}/{name}`                   | `ext_key_invalid`          |
 //!
-//! `ext` is treated on a run as on a record: an object whose keys are
-//! meant to be namespaces, accepted as the JSON Schema describes it, with
-//! no semantic rule of its own in this crate today. `meta` is never looked
-//! into.
+//! `ext` is treated on a run as on a record: the map itself is open, and
+//! only its keys are checked, at the top level and inside each facet that
+//! carries one (`model`, `task`, `harness`, `generation`, `trial`,
+//! `grading`, `env`), one error per key at `/ext/{key}` or
+//! `/{facet}/ext/{key}`. The values are never looked into, and neither is
+//! `meta`.
 //!
 //! The semantic pass runs on whatever is present even when the structural
 //! pass failed, so a producer sees both kinds of problem at once. Errors
@@ -470,6 +474,47 @@ fn metric_id(out: &mut Vec<ErrorEntry>, pointer: String, m: &str) {
     }
 }
 
+/// The facets of a record or a run that carry an `ext` map of their own.
+/// `grading` exists on a Card only; on an Eval or a run it is simply absent.
+const FACETS_WITH_EXT: [&str; 7] = [
+    "model",
+    "task",
+    "harness",
+    "generation",
+    "trial",
+    "grading",
+    "env",
+];
+
+/// `ext_key_invalid` at `{prefix}/ext/{key}` for every key of `obj.ext`
+/// that is not `{ns}/{name}`. `prefix` is the pointer of `obj` itself
+/// (`""` for the body, `"/model"` for a facet).
+fn ext_keys(out: &mut Vec<ErrorEntry>, prefix: &str, obj: &Map<String, Value>) {
+    let Some(ext) = obj.get("ext").and_then(Value::as_object) else {
+        return;
+    };
+    for key in ext.keys() {
+        if !is_valid_id(key) {
+            push(
+                out,
+                format!("{prefix}/ext/{}", escape_pointer(key)),
+                ErrorCode::ExtKeyInvalid,
+                format!("ext key {key:?} is not of the form {{ns}}/{{name}}"),
+            );
+        }
+    }
+}
+
+/// [`ext_keys`] on the body and on each of its [`FACETS_WITH_EXT`].
+fn ext_keys_everywhere(out: &mut Vec<ErrorEntry>, obj: &Map<String, Value>) {
+    ext_keys(out, "", obj);
+    for facet in FACETS_WITH_EXT {
+        if let Some(f) = obj.get(facet).and_then(Value::as_object) {
+            ext_keys(out, &format!("/{facet}"), f);
+        }
+    }
+}
+
 /// Whether a key is absent or `null`: both mean "not given" for the
 /// pairings checked here.
 fn given(obj: &Map<String, Value>, key: &str) -> bool {
@@ -487,6 +532,7 @@ fn semantic(
     };
 
     let paths = attachment_paths(obj, out);
+    ext_keys_everywhere(out, obj);
 
     if kind == RecordKind::Card {
         let results = obj.get("results").and_then(Value::as_array);
@@ -703,6 +749,7 @@ fn run_semantic(run_id: &str, value: &Value, out: &mut Vec<ErrorEntry>) {
             metric_id(out, format!("/metrics/{}", escape_pointer(key)), key);
         }
     }
+    ext_keys_everywhere(out, obj);
 }
 
 #[cfg(test)]

@@ -541,6 +541,11 @@ expression: body
             "type": "string"
           },
           {
+            "const": "ext_key_invalid",
+            "description": "A key of `ext`, at the top level of a record or a run or inside one\nof its facets, is not of the form `{ns}/{name}`.",
+            "type": "string"
+          },
+          {
             "const": "type_mismatch",
             "description": "Query: operator applied to a path of another type.",
             "type": "string"

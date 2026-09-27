@@ -1,0 +1,10 @@
+[
+  {
+    "path": "/env/ext/x y",
+    "code": "ext_key_invalid"
+  },
+  {
+    "path": "/model/ext/bad",
+    "code": "ext_key_invalid"
+  }
+]

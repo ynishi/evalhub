@@ -1,0 +1,10 @@
+[
+  {
+    "path": "/ext/Core~1x",
+    "code": "ext_key_invalid"
+  },
+  {
+    "path": "/ext/notes",
+    "code": "ext_key_invalid"
+  }
+]

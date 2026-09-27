@@ -237,6 +237,57 @@ async fn put_checks_the_run_id_against_the_path() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
+/// An `ext` key without a namespace is `422 ext_key_invalid` at
+/// `/ext/{key}`, on an Eval as on a run; a facet's `ext` is checked the
+/// same way.
+#[tokio::test]
+async fn an_ext_key_without_a_namespace_is_refused_on_records_and_runs() {
+    let (hub, alice) = hub_with_eval(Hub::start().await).await;
+
+    let mut eval: Value = serde_json::from_str(EVAL).unwrap();
+    eval["ext"] = json!({"notes": {}, "alice/ok": {}});
+    eval["model"]["ext"] = json!({"bad": {}});
+    let (status, body) = hub
+        .call(
+            Method::POST,
+            "/api/v1/evals/alice/ext-bad",
+            Some(&alice),
+            Some(&eval.to_string()),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    let at: Vec<(&str, &str)> = body["errors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| (e["path"].as_str().unwrap(), e["code"].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        at,
+        [
+            ("/ext/notes", "ext_key_invalid"),
+            ("/model/ext/bad", "ext_key_invalid")
+        ],
+        "{body}"
+    );
+
+    hub.ready_attachments(common::RUN).await;
+    let mut run: Value = serde_json::from_str(common::RUN).unwrap();
+    run["ext"] = json!({"notes": {}});
+    let (status, body) = hub
+        .call(
+            Method::PUT,
+            &format!("/api/v1/evals/{EVAL_NAME}/runs/r1"),
+            Some(&alice),
+            Some(&run.to_string()),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["errors"].as_array().unwrap().len(), 1, "{body}");
+    assert_eq!(body["errors"][0]["code"], "ext_key_invalid", "{body}");
+    assert_eq!(body["errors"][0]["path"], "/ext/notes", "{body}");
+}
+
 /// A batch with invalid elements writes nothing and lists every failing
 /// element by index; a valid batch writes all.
 #[tokio::test]

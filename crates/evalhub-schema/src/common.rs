@@ -60,7 +60,10 @@
 //! arbitrary JSON object. Namespacing is mandatory so that two producers'
 //! extensions cannot collide, and so that a namespace can later register an
 //! `ext_schema` to make its keys typed and indexable. Until it does, `ext`
-//! values can be searched with `eq` and `exists` only.
+//! values can be searched with `eq` and `exists` only. The hub checks the
+//! key form on every write, at the top level and inside each facet, and
+//! refuses a key that is not `{ns}/{name}` with `ext_key_invalid`
+//! (`evalhub_core::validate`); the values are not looked into.
 
 use std::collections::BTreeMap;
 

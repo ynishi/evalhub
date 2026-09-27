@@ -258,6 +258,25 @@ With `flyctl` logged in, from the checkout of the 0.2.0 tag:
 Releases after 0.2.0 go back to the plain `fly deploy --ha=false` above,
 unless their release notes say otherwise.
 
+## Upgrading to 0.3.0
+
+0.3.0 deploys the plain way, with one check first. It starts refusing an
+`ext` key that is not `{ns}/{name}` (`422 ext_key_invalid`, at the top
+level and inside each facet), which the documentation always required and
+0.2.0 never checked. Stored bodies are not rewritten and keep being
+served; the rule applies to writes. To know whether any producer has been
+relying on the gap, list the stored keys that would now be refused:
+
+```bash
+bash deploy/fly/ext-keys-check.sh        # read-only; `(0 rows)` means none
+```
+
+A row names a version or a run, the path of its `ext` and the offending
+key. With none, nothing else changes for existing data. With some, the
+producers behind them need to namespace their keys before their next
+write, and the release notes of the issue that introduced the rule
+record what was found.
+
 ## A custom domain
 
 ```bash
