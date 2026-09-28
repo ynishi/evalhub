@@ -1169,7 +1169,12 @@ async fn same_model_compares_the_card_with_every_used_run() {
         json!({"status": "ok", "model": {"id": "m2"}}),
     )
     .await;
-    for (name, uses) in [("only-r1", Some(json!({"runs": ["r1"]}))), ("both", None)] {
+    for (name, uses) in [
+        ("only-r1", Some(json!({"runs": ["r1"]}))),
+        ("both", None),
+        // An explicit empty list: the Card used no run of this Eval.
+        ("none", Some(json!({"runs": []}))),
+    ] {
         card(
             pool,
             "alice",
@@ -1182,7 +1187,8 @@ async fn same_model_compares_the_card_with_every_used_run() {
         .await
         .unwrap();
     }
-    // An Eval without runs: the header is compared, as before runs were rows.
+    // An Eval without runs: the Card used no run, so it agrees with none,
+    // even though its model equals the header's.
     eval_header(pool, "alice", "bare", "b", "m1", Visibility::Public).await;
     card(
         pool,
@@ -1215,13 +1221,26 @@ async fn same_model_compares_the_card_with_every_used_run() {
     assert!(row("both").same_harness);
     assert_eq!(row("both").runs_used, 2);
     assert!(row("both").changed_since_card.is_empty());
+    assert_eq!(row("none").runs_used, 0);
+    assert!(
+        !row("none").same_model,
+        "an empty used set agrees with nothing"
+    );
+    assert!(
+        !row("none").same_harness,
+        "an empty used set agrees with nothing"
+    );
 
     let rows = relations::cards_using_eval(pool, latest("bare").await, &alice())
         .await
         .unwrap();
     assert_eq!(rows.len(), 1);
-    assert!(rows[0].same_model && rows[0].same_harness);
     assert_eq!(rows[0].runs_used, 0);
+    assert!(!rows[0].same_model, "an empty used set agrees with nothing");
+    assert!(
+        !rows[0].same_harness,
+        "an empty used set agrees with nothing"
+    );
 }
 
 #[tokio::test]

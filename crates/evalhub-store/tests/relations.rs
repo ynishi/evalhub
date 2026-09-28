@@ -29,6 +29,50 @@ async fn edge(pool: &PgPool, from: Uuid, ty: &str, to: Option<Uuid>, external: O
     .unwrap();
 }
 
+/// Record that Card version `card` used run `run_id` of the Eval record
+/// `eval_record`: the run row (with its harness and model fingerprints)
+/// and the `card_eval_runs` row that fixes it in the Card's used set.
+async fn used_run(
+    pool: &PgPool,
+    card: Uuid,
+    eval_record: Uuid,
+    run_id: &str,
+    harness: &[u8],
+    model: &[u8],
+) {
+    sqlx::query(
+        "INSERT INTO runs (record_id, run_id, status, body, content_hash) VALUES ($1, $2, 'ok', '{}', $3)",
+    )
+    .bind(eval_record)
+    .bind(run_id)
+    .bind(&[7u8; 32][..])
+    .execute(pool)
+    .await
+    .unwrap();
+    for (facet, value) in [("harness", harness), ("model", model)] {
+        sqlx::query(
+            "INSERT INTO run_fingerprints (record_id, run_id, facet, fingerprint) VALUES ($1, $2, $3, $4)",
+        )
+        .bind(eval_record)
+        .bind(run_id)
+        .bind(facet)
+        .bind(value)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO card_eval_runs (card_version_id, eval_record_id, run_id, content_hash) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(card)
+    .bind(eval_record)
+    .bind(run_id)
+    .bind(&[7u8; 32][..])
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 async fn fingerprint(pool: &PgPool, version: Uuid, facet: &str, value: &[u8]) {
     sqlx::query("INSERT INTO fingerprints (version_id, facet, fingerprint) VALUES ($1, $2, $3)")
         .bind(version)
@@ -359,17 +403,19 @@ async fn add_resolves_and_audits() {
 async fn comparison_view() {
     let db = common::db().await;
     let pool = &db.pool;
-    let (_, eval) = common::seed_version(pool, "eval", "alice", "e", 1, "public", "e").await;
+    let (eval_rec, eval) = common::seed_version(pool, "eval", "alice", "e", 1, "public", "e").await;
     fingerprint(pool, eval, "harness", b"H1").await;
     fingerprint(pool, eval, "model", b"M1").await;
 
-    // Same harness, different model.
+    // Used r1: same harness as r1, different model.
     let (_, c1) = common::seed_version(pool, "card", "alice", "c1", 1, "public", "c1").await;
     fingerprint(pool, c1, "harness", b"H1").await;
     fingerprint(pool, c1, "model", b"M2").await;
     edge(pool, c1, USES_EVAL, Some(eval), None).await;
+    used_run(pool, c1, eval_rec, "r1", b"H1", b"M1").await;
 
-    // Same model via a textual edge; private to bob.
+    // A textual edge, private to bob: it fixed no used set, so there is no
+    // run to agree with, even though its model equals the Eval header's.
     let (_, c2) = common::seed_version(pool, "card", "bob", "c2", 1, "private", "c2").await;
     fingerprint(pool, c2, "harness", b"H9").await;
     fingerprint(pool, c2, "model", b"M1").await;
@@ -399,6 +445,7 @@ async fn comparison_view() {
     assert_eq!(rows[0].title.as_deref(), Some("c1"));
     assert!(rows[0].same_harness);
     assert!(!rows[0].same_model);
+    assert_eq!(rows[0].runs_used, 1);
     assert_eq!(
         rows[0].fingerprints.get("model").map(Vec::as_slice),
         Some(&b"M2"[..])
@@ -409,8 +456,9 @@ async fn comparison_view() {
         .unwrap();
     assert_eq!(rows.len(), 2, "{rows:?}");
     let c2row = rows.iter().find(|r| r.name == "c2").unwrap();
-    assert!(!c2row.same_harness);
-    assert!(c2row.same_model);
+    assert_eq!(c2row.runs_used, 0);
+    assert!(!c2row.same_harness, "an empty used set agrees with nothing");
+    assert!(!c2row.same_model, "an empty used set agrees with nothing");
     assert_eq!(c2row.version_id, c2);
 
     assert!(

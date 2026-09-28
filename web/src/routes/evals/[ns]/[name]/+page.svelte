@@ -302,13 +302,15 @@
 								<td>
 									{#if row.same_model}<span
 											class="badge"
-											title="Its model fingerprint equals this Eval's.">yes</span
+											title="Its model fingerprint equals that of every run it used from this Eval."
+											>yes</span
 										>{:else}<span class="faint">no</span>{/if}
 								</td>
 								<td>
 									{#if row.same_harness}<span
 											class="badge"
-											title="Its harness fingerprint equals this Eval's.">yes</span
+											title="Its harness fingerprint equals that of every run it used from this Eval."
+											>yes</span
 										>{:else}<span class="faint">no</span>{/if}
 								</td>
 							</tr>

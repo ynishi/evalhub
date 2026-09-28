@@ -39,6 +39,51 @@ fn eval_titled(title: &str) -> String {
     v.to_string()
 }
 
+/// A Card on an Eval with no runs used no run, so it agrees with none:
+/// both flags are false even though its model and harness equal the Eval
+/// header's, and `runs_used: 0` says why.
+#[tokio::test]
+async fn comparison_view_an_empty_used_set_agrees_with_nothing() {
+    let hub = Hub::start_with_storage().await;
+    let alice = hub.user("alice", Scope::Write).await;
+    hub.ready_attachments(CARD).await;
+    hub.ready_attachments(EVAL).await;
+
+    let (status, _) = hub
+        .call(
+            Method::POST,
+            "/api/v1/evals/alice/no-runs",
+            Some(&alice),
+            Some(&eval_titled("no runs")),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (status, created) = hub
+        .call(
+            Method::POST,
+            "/api/v1/cards/alice/on-no-runs",
+            Some(&alice),
+            Some(&card_citing("header model", "alice/no-runs@1", None)),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+
+    let (status, view) = hub
+        .call(
+            Method::GET,
+            "/api/v1/evals/alice/no-runs/cards",
+            Some(&alice),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{view}");
+    let items = view["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "{view}");
+    assert_eq!(items[0]["runs_used"], 0);
+    assert_eq!(items[0]["same_model"], false, "{view}");
+    assert_eq!(items[0]["same_harness"], false, "{view}");
+}
+
 /// Two Cards measured on one Eval line up, and the hub says which axes
 /// agree without ranking them.
 #[tokio::test]
@@ -57,8 +102,18 @@ async fn comparison_view_lines_cards_up() {
         )
         .await;
     assert_eq!(status, StatusCode::CREATED);
+    // One run, on the Eval's model and harness: the Cards compare with it.
+    let (status, body) = hub
+        .put_run(
+            &alice,
+            "alice/single2-k4",
+            "r1",
+            json!({"core/duration_ms": 131000.0}),
+        )
+        .await;
+    assert!(status.is_success(), "{status} {body}");
 
-    // Same model as the Eval, and a second Card on another model.
+    // Same model as the run, and a second Card on another model.
     for (name, title, model) in [
         ("first", "same model", None),
         ("second", "other model", Some("other-model")),
@@ -91,6 +146,8 @@ async fn comparison_view_lines_cards_up() {
         .iter()
         .map(|i| (i["name"].as_str().unwrap(), i))
         .collect();
+    assert_eq!(by_name["first"]["runs_used"], 1);
+    assert_eq!(by_name["second"]["runs_used"], 1);
     assert_eq!(by_name["first"]["same_model"], true);
     assert_eq!(by_name["first"]["same_harness"], true);
     assert_eq!(by_name["second"]["same_model"], false);
