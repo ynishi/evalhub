@@ -39,8 +39,9 @@
 //! `(record, run_id)`, and adding or overwriting one does not append a
 //! header version. A header version is appended when the description or the
 //! default conditions change. This is the change from `evalhub.eval/1.0`,
-//! whose body carried `runs[]` (the 1.0 shape is kept in [`v1`] for the one
-//! release that still accepts it).
+//! whose body carried `runs[]`. The hub accepted that shape in releases
+//! 0.2.0 and 0.3.0 and refuses it since 0.4.0 (`422 runs_moved`); the 1.0
+//! type is no longer part of this crate.
 //!
 //! A header example:
 //!
@@ -145,8 +146,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::common::{Attachment, Ext, Producer, Redaction, Relation};
 use crate::facet::{Env, Generation, Harness, Model, Task, Trial};
-
-pub mod v1;
 
 /// An Eval header: what the material is, how it came to exist, and the
 /// default conditions for its runs. The runs themselves are not part of the

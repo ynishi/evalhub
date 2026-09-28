@@ -6,7 +6,6 @@
 
 use evalhub_schema::card::Card;
 use evalhub_schema::eval::Eval;
-use evalhub_schema::eval::v1;
 use evalhub_schema::run::{Run, RunStatus};
 use serde_json::Value;
 
@@ -67,18 +66,6 @@ fn an_eval_header_with_runs_is_rejected() {
     input["runs"] = fixture("eval-run-set-v1.json")["runs"].clone();
     let err = serde_json::from_value::<Eval>(input).unwrap_err();
     assert!(err.to_string().contains("unknown field `runs`"), "{err}");
-}
-
-#[test]
-fn eval_v1_fixture_round_trips() {
-    let input = fixture("eval-run-set-v1.json");
-    let eval: v1::Eval = serde_json::from_value(input.clone()).unwrap();
-    assert_eq!(eval.schema, "evalhub.eval/1.0");
-    assert_eq!(eval.runs.len(), 1);
-    assert_eq!(eval.runs[0].run_id, "r1");
-    assert_eq!(eval.runs[0].outcome, v1::Outcome::Pass);
-    let output = serde_json::to_value(&eval).unwrap();
-    assert_eq!(output, input);
 }
 
 #[test]
@@ -179,7 +166,6 @@ fn fixtures_validate_against_the_generated_schema_shape() {
         (evalhub_schema::schema_for_card(), "card-complete.json"),
         (evalhub_schema::schema_for_card(), "card-run-results.json"),
         (evalhub_schema::schema_for_eval(), "eval-run-set.json"),
-        (evalhub_schema::schema_for_eval_v1(), "eval-run-set-v1.json"),
         (evalhub_schema::schema_for_run(), "run.json"),
     ];
     for (schema, name) in cases {

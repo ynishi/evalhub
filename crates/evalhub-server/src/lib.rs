@@ -124,11 +124,10 @@
 //! ```
 //!
 //! Every run route follows the Eval's visibility (`404` for an Eval the
-//! caller may not see). A 2.0 header carrying `runs` is `422 runs_moved`;
-//! a 0.1.x `evalhub.eval/1.0` body (header and `runs[]` in one) is still
-//! accepted in 0.2.0 with a `Deprecation` header and converted into a
-//! header and run rows, and **0.3.0 removes this**. See [`api::runs`] and
-//! [`api::records`].
+//! caller may not see). A 2.0 header carrying `runs` is `422 runs_moved`,
+//! and so is a 0.1.x `evalhub.eval/1.0` body (header and `runs[]` in one):
+//! releases 0.2.0 and 0.3.0 accepted and converted it, 0.4.0 refuses it.
+//! See [`api::runs`] and [`api::records`].
 //!
 //! # Limits
 //!

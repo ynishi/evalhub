@@ -14,8 +14,6 @@
 //!   "withheld": { "relations": [...], "run_results": n },  // removed for this reader
 //!   "tombstone": { "at", "reason", "note" },     // when tombstoned; record is absent
 //!   "runs": { "count", "by_status", "archived", "deleted", "runs_hash" },  // an Eval's GET
-//!   "converted_from": "evalhub.eval/1.0",        // a POST of a 1.0 Eval body
-//!   "converted_runs": { "runs": [...], "runs_hash" }
 //! }
 //! ```
 //!
@@ -38,25 +36,18 @@
 //! `@label` is read, tombstoned versions included, because runs are not
 //! versioned; tombstoning a version touches no run.
 //!
-//! # The `evalhub.eval/1.0` body (until 0.3.0)
+//! # Runs in the body, and `evalhub.eval/1.0`
 //!
 //! An `evalhub.eval/2.0` body with a `runs` key is `422` with the single
 //! error `runs_moved` (from `evalhub_core::validate`, ahead of every other
-//! error). An `evalhub.eval/1.0` body, header and `runs[]` in one, is
-//! still accepted in release 0.2.0, for one release, as the schema crate
-//! promises for a previous major: the store splits it
-//! (`evalhub_core::eval::split_v1`) into a 2.0 header, stored as the
-//! version, and run rows written as by `POST …/runs:batch`, in one
-//! transaction. The response carries `Deprecation: @1790294400` (RFC 9745:
-//! deprecated since 2026-09-25, when the 2.0 header replaced it),
-//! `converted_from: "evalhub.eval/1.0"`, the stored header's
-//! `content_hash` (not the hash of the body as sent), and
-//! `converted_runs`, the runs as a batch reports them. Posting the same
-//! 1.0 body again is `200` with every run `unchanged`. A refused run
-//! refuses the whole post, its entries prefixed `/runs/{index}` of the
-//! posted `runs[]`. **0.3.0 removes this**: a 1.0 body with `runs` will
-//! then be refused with `422 runs_moved`, as a 2.0 header with `runs` is
-//! now.
+//! error), and so is a body declaring `evalhub.eval/1.0`, the 0.1.x shape
+//! with `runs[]` in the body, with or without `runs`. Releases 0.2.0 and
+//! 0.3.0 accepted a 1.0 body, converted it into a 2.0 header and run rows,
+//! and answered with a `Deprecation` header and `converted_from` /
+//! `converted_runs` in the envelope; release 0.4.0 removed that path, the
+//! header and both fields. Runs are written with
+//! `PUT /evals/{ns}/{name}/runs/{run_id}` or
+//! `POST /evals/{ns}/{name}/runs:batch` (`crate::api::runs`).
 //!
 //! # A Card's `run_results`
 //!
@@ -112,7 +103,7 @@ use std::collections::BTreeMap;
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, HeaderValue, StatusCode};
+use axum::http::StatusCode;
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -347,15 +338,6 @@ pub struct VersionEnvelope {
     /// record, so this is the same at every `@seq`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub runs: Option<crate::api::runs::RunsSummaryDto>,
-    /// On a `POST` of an `evalhub.eval/1.0` body: the schema the body
-    /// declared. The stored version is the `evalhub.eval/2.0` header split
-    /// from it, and `content_hash` is that header's. Accepted until 0.3.0.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub converted_from: Option<String>,
-    /// On a `POST` of an `evalhub.eval/1.0` body: its `runs[]`, written as
-    /// run rows, reported as `POST …/runs:batch` reports runs.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub converted_runs: Option<crate::api::runs::ConvertedRunsDto>,
 }
 
 impl VersionEnvelope {
@@ -385,8 +367,6 @@ impl VersionEnvelope {
             withheld: None,
             tombstone: None,
             runs: None,
-            converted_from: None,
-            converted_runs: None,
         }
     }
 
@@ -496,11 +476,6 @@ fn decode_sha(hex_str: &str, path: String) -> Result<[u8; 32], ErrorEntry> {
     }
 }
 
-/// `Deprecation` on the response to an `evalhub.eval/1.0` post: an RFC
-/// 9745 structured date, 2026-09-25T00:00:00Z, the day `evalhub.eval/2.0`
-/// replaced it.
-pub const EVAL_V1_DEPRECATION: &str = "@1790294400";
-
 /// `run_results[]` of a Card body above the configured limit, as the one
 /// error to answer with. Counted on the parsed body, before validation.
 fn too_many_run_results(body: &Value, max: usize) -> Option<ErrorEntry> {
@@ -524,7 +499,7 @@ async fn post(
     path: RecordPath,
     query: PostQuery,
     body: Value,
-) -> Result<(StatusCode, HeaderMap, Json<VersionEnvelope>), ApiError> {
+) -> Result<(StatusCode, Json<VersionEnvelope>), ApiError> {
     let Auth(caller) = caller;
     if !caller.allows(&path.ns, Scope::Write) {
         return Err(ApiError::Forbidden);
@@ -545,6 +520,12 @@ async fn post(
     }
 
     let mut errors = evalhub_core::validate(kind, &body);
+    // `runs_moved` is the one error such a body gets (a 2.0 header with
+    // `runs`, or a body declaring `evalhub.eval/1.0`); nothing is added to
+    // it, not even the sha256 decode below.
+    if errors.iter().any(|e| e.code == ErrorCode::RunsMoved) {
+        return Err(ApiError::Validation(errors));
+    }
     // sha256 values are decoded here because the store needs the bytes;
     // the validator only checks that the key is a string.
     let mut shas: Vec<(String, [u8; 32])> = Vec::new();
@@ -682,7 +663,7 @@ async fn post(
     };
 
     let readable_ns = caller.namespaces();
-    let ingested = records::ingest(
+    let ingested = records::create_or_append(
         state.db()?,
         NewVersion {
             record_type,
@@ -723,18 +704,11 @@ async fn post(
         Err(e) => return Err(e.into()),
     };
 
-    let (status, meta) = match ingested.outcome {
+    let (status, meta) = match ingested {
         CreateOutcome::Created { meta, .. } => (StatusCode::CREATED, meta),
         CreateOutcome::Existing(meta) => (StatusCode::OK, meta),
     };
-    let mut env = VersionEnvelope::from_meta(meta, None);
-    let mut headers = HeaderMap::new();
-    if let Some(converted) = ingested.converted {
-        headers.insert("deprecation", HeaderValue::from_static(EVAL_V1_DEPRECATION));
-        env.converted_from = Some(converted.converted_from.to_string());
-        env.converted_runs = Some(converted.into());
-    }
-    Ok((status, headers, Json(env)))
+    Ok((status, Json(VersionEnvelope::from_meta(meta, None))))
 }
 
 async fn get(
@@ -991,7 +965,7 @@ macro_rules! record_handlers {
             Path(path): Path<RecordPath>,
             Query(query): Query<PostQuery>,
             Json(body): Json<Value>,
-        ) -> Result<(StatusCode, HeaderMap, Json<VersionEnvelope>), ApiError> {
+        ) -> Result<(StatusCode, Json<VersionEnvelope>), ApiError> {
             post($rt, state, caller, path, query, body).await
         }
 

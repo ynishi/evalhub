@@ -731,10 +731,9 @@ fn post_record_docs(op: TransformOperation<'_>) -> TransformOperation<'_> {
          `write` on `ns`. If the canonical body equals the latest version's, \
          that version is returned with `200` and nothing is written. An \
          `evalhub.eval/2.0` body carrying `runs` is `422 runs_moved`: runs are \
-         written with `PUT …/runs/{run_id}` or `POST …/runs:batch`. An \
-         `evalhub.eval/1.0` body is still accepted until 0.3.0: it is stored as \
-         a 2.0 header plus run rows, and the response carries a `Deprecation` \
-         header, `converted_from` and `converted_runs`. A Card with more \
+         written with `PUT …/runs/{run_id}` or `POST …/runs:batch`. A body \
+         declaring `evalhub.eval/1.0` is `422 runs_moved` too, with or \
+         without `runs`: only `evalhub.eval/2.0` is accepted. A Card with more \
          `run_results` than `limits.run_results` is `422 too_many_run_results`.",
     )
     .response_with::<201, Json<records::VersionEnvelope>, _>(|r| {

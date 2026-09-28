@@ -419,8 +419,8 @@ export async function listRegistry(
 	).items;
 }
 
-/** Fetch one of the served JSON Schemas (`card`, `eval` (the 1.0 body,
- * until 0.3.0), `eval-2` (the Eval header), `run`, `error`, `query`). The
+/** Fetch one of the served JSON Schemas (`card`, `eval-2` (the Eval
+ * header), `run`, `error`, `query`). The
  * query builder walks these for its path vocabulary, which
  * is why it stays right when the record types change. */
 export async function getSchema(name: string): Promise<Record<string, unknown>> {

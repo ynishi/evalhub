@@ -321,35 +321,6 @@ expression: body
         ],
         "type": "object"
       },
-      "ConvertedRunsDto": {
-        "description": "The runs split off an `evalhub.eval/1.0` body by `POST /evals/{ns}/{name}`,\nas `POST …/runs:batch` reports runs, plus the ids the body repeated.",
-        "properties": {
-          "duplicate_run_ids": {
-            "description": "Every `run_id` that appeared more than once in `runs[]`; the last\nelement carrying it is the one written. 0.1.x accepted such\nbodies, so they are not refused.",
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "runs": {
-            "description": "One entry per distinct `run_id`, in the order each id first\nappeared in the body's `runs[]`.",
-            "items": {
-              "$ref": "#/components/schemas/RunWriteDto"
-            },
-            "type": "array"
-          },
-          "runs_hash": {
-            "description": "Hex `runs_hash` of the Eval after the write.",
-            "type": "string"
-          }
-        },
-        "required": [
-          "runs",
-          "runs_hash",
-          "duplicate_run_ids"
-        ],
-        "type": "object"
-      },
       "Dir": {
         "description": "Sort direction.",
         "oneOf": [
@@ -582,7 +553,7 @@ expression: body
           },
           {
             "const": "runs_moved",
-            "description": "An `evalhub.eval/2.0` Eval header carries `runs`. Runs are not part\nof the header; they are written one by one or in a batch.",
+            "description": "An `evalhub.eval/2.0` Eval header carries `runs`, or the body\ndeclares `evalhub.eval/1.0` (with or without `runs`). Runs are not\npart of the header; they are written one by one or in a batch.",
             "type": "string"
           },
           {
@@ -2584,24 +2555,6 @@ expression: body
             "description": "Hex sha256 of the canonical record.",
             "type": "string"
           },
-          "converted_from": {
-            "description": "On a `POST` of an `evalhub.eval/1.0` body: the schema the body\ndeclared. The stored version is the `evalhub.eval/2.0` header split\nfrom it, and `content_hash` is that header's. Accepted until 0.3.0.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "converted_runs": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ConvertedRunsDto"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "On a `POST` of an `evalhub.eval/1.0` body: its `runs[]`, written as\nrun rows, reported as `POST …/runs:batch` reports runs."
-          },
           "created_at": {
             "description": "When the hub stored this version.",
             "format": "date-time",
@@ -3478,7 +3431,7 @@ expression: body
         "summary": "Read Card version"
       },
       "post": {
-        "description": "Validates the body, canonicalises it and stores it as the next version of `{ns}/{name}`, creating the name if needed. Requires a token with `write` on `ns`. If the canonical body equals the latest version's, that version is returned with `200` and nothing is written. An `evalhub.eval/2.0` body carrying `runs` is `422 runs_moved`: runs are written with `PUT …/runs/{run_id}` or `POST …/runs:batch`. An `evalhub.eval/1.0` body is still accepted until 0.3.0: it is stored as a 2.0 header plus run rows, and the response carries a `Deprecation` header, `converted_from` and `converted_runs`. A Card with more `run_results` than `limits.run_results` is `422 too_many_run_results`.",
+        "description": "Validates the body, canonicalises it and stores it as the next version of `{ns}/{name}`, creating the name if needed. Requires a token with `write` on `ns`. If the canonical body equals the latest version's, that version is returned with `200` and nothing is written. An `evalhub.eval/2.0` body carrying `runs` is `422 runs_moved`: runs are written with `PUT …/runs/{run_id}` or `POST …/runs:batch`. A body declaring `evalhub.eval/1.0` is `422 runs_moved` too, with or without `runs`: only `evalhub.eval/2.0` is accepted. A Card with more `run_results` than `limits.run_results` is `422 too_many_run_results`.",
         "operationId": "post_card",
         "parameters": [
           {
@@ -4576,7 +4529,7 @@ expression: body
         "summary": "Read Eval version"
       },
       "post": {
-        "description": "Validates the body, canonicalises it and stores it as the next version of `{ns}/{name}`, creating the name if needed. Requires a token with `write` on `ns`. If the canonical body equals the latest version's, that version is returned with `200` and nothing is written. An `evalhub.eval/2.0` body carrying `runs` is `422 runs_moved`: runs are written with `PUT …/runs/{run_id}` or `POST …/runs:batch`. An `evalhub.eval/1.0` body is still accepted until 0.3.0: it is stored as a 2.0 header plus run rows, and the response carries a `Deprecation` header, `converted_from` and `converted_runs`. A Card with more `run_results` than `limits.run_results` is `422 too_many_run_results`.",
+        "description": "Validates the body, canonicalises it and stores it as the next version of `{ns}/{name}`, creating the name if needed. Requires a token with `write` on `ns`. If the canonical body equals the latest version's, that version is returned with `200` and nothing is written. An `evalhub.eval/2.0` body carrying `runs` is `422 runs_moved`: runs are written with `PUT …/runs/{run_id}` or `POST …/runs:batch`. A body declaring `evalhub.eval/1.0` is `422 runs_moved` too, with or without `runs`: only `evalhub.eval/2.0` is accepted. A Card with more `run_results` than `limits.run_results` is `422 too_many_run_results`.",
         "operationId": "post_eval",
         "parameters": [
           {

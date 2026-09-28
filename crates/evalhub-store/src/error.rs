@@ -164,8 +164,7 @@ pub enum StoreError {
     #[error("run is deleted")]
     RunDeleted,
 
-    /// A `put` or `put_batch` (or the runs of an `evalhub.eval/1.0` body)
-    /// was refused, and nothing was written. Carries every failing element,
+    /// A `put` or `put_batch` was refused, and nothing was written. Carries every failing element,
     /// in input order, each with the reasons it failed: the validation
     /// codes of `evalhub_core::validate::run`, `batch_duplicate_run_id`,
     /// `run_deleted` and `attachment_missing`. The HTTP status is the
@@ -174,7 +173,7 @@ pub enum StoreError {
     RunsRejected(Vec<RunRejection>),
 
     /// A Card's references to runs were refused, and nothing was written:
-    /// the Card ingest ([`crate::records::ingest`]) or a later
+    /// the Card ingest ([`crate::records::create_or_append`]) or a later
     /// `core/uses_eval` edge ([`crate::relations::add`]) named a run that
     /// has no row in an Eval the writer may see (`run_unknown`), or a
     /// `run_results[]` element outside the Card's used set for its Eval
@@ -209,10 +208,8 @@ pub enum StoreError {
 /// One refused element of a run write. See [`StoreError::RunsRejected`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunRejection {
-    /// Position of the element in the input: the batch's `runs[]`, `0` for
-    /// a single `put`, or the position in the posted `runs[]` for a
-    /// converted `evalhub.eval/1.0` body (the last element carrying that
-    /// `run_id`, which is the one the conversion kept).
+    /// Position of the element in the input: the batch's `runs[]`, or `0`
+    /// for a single `put`.
     pub index: usize,
     /// The `run_id` the element was written under (empty when it had none).
     pub run_id: String,

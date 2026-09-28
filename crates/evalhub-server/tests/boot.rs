@@ -121,11 +121,14 @@ async fn schemas_are_served_with_id() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
-/// The Eval header (`eval-2`) and the run have schemas of their own, and
-/// the 1.0 Eval (`eval`) is still served while it is accepted.
+/// The Eval header (`eval-2`) and the run have schemas of their own. The
+/// 1.0 Eval document (`eval`) is no longer served: the window that
+/// accepted `evalhub.eval/1.0` is closed.
 #[tokio::test]
 async fn run_and_eval_header_schemas_are_served() {
-    for name in ["eval-2", "run", "eval"] {
+    let (status, _) = get("/schemas/eval").await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "/schemas/eval");
+    for name in ["eval-2", "run"] {
         let (status, body) = get(&format!("/schemas/{name}")).await;
         assert_eq!(status, StatusCode::OK, "{name}");
         assert_eq!(body["additionalProperties"], false, "{name}");

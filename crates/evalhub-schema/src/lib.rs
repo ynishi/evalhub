@@ -107,8 +107,7 @@
 //! # Modules
 //!
 //! - [`card`] — the Card record: results, counts, provenance, redaction.
-//! - [`eval`] — the Eval header: origin, source kind, default conditions;
-//!   and [`eval::v1`], the 1.0 shape with `runs[]` in the body.
+//! - [`eval`] — the Eval header: origin, source kind, default conditions.
 //! - [`run`] — a run of an Eval: status, per-run facets, metrics, its own
 //!   attachments.
 //! - [`facet`] — the seven facets and their core keys.
@@ -125,7 +124,8 @@
 //! that adds an optional key is a minor bump; a change that removes a key,
 //! changes a type, or tightens a constraint is a major bump and a new
 //! `schemas/card-2.json` alongside the old one. The hub keeps accepting the
-//! previous major for at least one release.
+//! previous major for at least one release after the new one ships, and
+//! then refuses it.
 //!
 //! A kind can therefore have more than one accepted identifier.
 //! [`RecordKind::schema_id`] and [`RecordKind::schema`] name the current
@@ -138,11 +138,17 @@
 //! The current state: `evalhub.card/1.1` added the optional `run_results`,
 //! and `evalhub.card/1.0` remains accepted under the same document
 //! (`schemas/card.json`). `evalhub.eval/2.0` removed `runs` from the Eval
-//! body, a major bump, so it has its own document (`schemas/eval-2.json`)
-//! beside the 1.0 one (`schemas/eval.json`, from [`eval::v1`]). Release
-//! 0.2.0 is the one release that still accepts `evalhub.eval/1.0` bodies,
-//! converting them at ingest into a 2.0 header and its runs; release 0.3.0
-//! removes `evalhub.eval/1.0`, [`eval::v1`] and `schemas/eval.json`.
+//! body, a major bump, so it has its own document (`schemas/eval-2.json`,
+//! served as `eval-2`) and is the only Eval identifier accepted.
+//!
+//! The previous Eval major, `evalhub.eval/1.0`, was accepted by releases
+//! 0.2.0 and 0.3.0, which converted such a body at ingest into a 2.0 header
+//! and its runs. Release 0.4.0 closed that window: a body declaring
+//! `evalhub.eval/1.0` is refused with `422 runs_moved`, the error a 2.0
+//! header carrying `runs` gets, and the 1.0 type (`eval::v1`) and its
+//! document (`schemas/eval.json`, served as `eval`) were removed. Stored
+//! 0.1.x bodies are converted once by the store's data migration, which
+//! keeps its own reading of the 1.0 shape.
 
 pub mod card;
 pub mod common;
@@ -157,23 +163,19 @@ pub mod run;
 /// `evalhub.card/1.0` is still accepted (see [`RecordKind::schema_ids`]).
 pub const CARD_SCHEMA: &str = "evalhub.card/1.1";
 
-/// Schema identifier an Eval header should declare: the current one.
-/// `evalhub.eval/1.0` is accepted by release 0.2.0 only (see
-/// [`RecordKind::schema_ids`] and [`eval::v1`]).
+/// Schema identifier an Eval header should declare, and the only one the
+/// hub accepts for an Eval (see "Versioning of the schema itself").
 pub const EVAL_SCHEMA: &str = "evalhub.eval/2.0";
 
 /// The previous minor of the Card schema, still accepted, described by the
 /// same document as [`CARD_SCHEMA`].
 const CARD_SCHEMA_1_0: &str = "evalhub.card/1.0";
 
-/// The previous major of the Eval schema, accepted by release 0.2.0 only.
-const EVAL_SCHEMA_1_0: &str = "evalhub.eval/1.0";
-
 /// Names under which the server serves the generated schemas
 /// (`GET /schemas/{name}`), in the order [`all_schemas`] returns them.
-/// `eval` is the 1.0 document (with `runs[]`) until release 0.3.0 removes
-/// it; `eval-2` is the current Eval header; `run` is one run.
-pub const SCHEMA_NAMES: [&str; 6] = ["card", "eval", "eval-2", "run", "error", "query"];
+/// `eval-2` is the Eval header; `run` is one run. There is no `eval`: that
+/// name served the `evalhub.eval/1.0` document, removed in release 0.4.0.
+pub const SCHEMA_NAMES: [&str; 5] = ["card", "eval-2", "run", "error", "query"];
 
 /// The two record kinds, as they appear in URLs (`/cards`, `/evals`) and in
 /// the `type` column of the store. Everything that differs between a Card
@@ -213,7 +215,7 @@ impl RecordKind {
     pub const fn schema_ids(self) -> &'static [&'static str] {
         match self {
             RecordKind::Card => &[CARD_SCHEMA, CARD_SCHEMA_1_0],
-            RecordKind::Eval => &[EVAL_SCHEMA, EVAL_SCHEMA_1_0],
+            RecordKind::Eval => &[EVAL_SCHEMA],
         }
     }
 
@@ -227,12 +229,11 @@ impl RecordKind {
 
     /// The generated JSON Schema for one accepted identifier of this kind,
     /// or `None` when `id` is not one of [`RecordKind::schema_ids`]. Both
-    /// Card identifiers share one document; each Eval major has its own.
+    /// Card identifiers share one document.
     pub fn schema_for(self, id: &str) -> Option<schemars::Schema> {
         match (self, id) {
             (RecordKind::Card, CARD_SCHEMA | CARD_SCHEMA_1_0) => Some(schema_for_card()),
             (RecordKind::Eval, EVAL_SCHEMA) => Some(schema_for_eval()),
-            (RecordKind::Eval, EVAL_SCHEMA_1_0) => Some(schema_for_eval_v1()),
             _ => None,
         }
     }
@@ -264,12 +265,6 @@ pub fn schema_for_eval() -> schemars::Schema {
     generator().into_root_schema_for::<eval::Eval>()
 }
 
-/// The JSON Schema of an [`eval::v1::Eval`] (`evalhub.eval/1.0`, with
-/// `runs[]`), served as `eval` until release 0.3.0 removes it.
-pub fn schema_for_eval_v1() -> schemars::Schema {
-    generator().into_root_schema_for::<eval::v1::Eval>()
-}
-
 /// The JSON Schema of a [`run::Run`].
 pub fn schema_for_run() -> schemars::Schema {
     generator().into_root_schema_for::<run::Run>()
@@ -293,7 +288,6 @@ pub fn schema_for_query() -> schemars::Schema {
 pub fn all_schemas() -> Vec<(&'static str, schemars::Schema)> {
     vec![
         ("card", schema_for_card()),
-        ("eval", schema_for_eval_v1()),
         ("eval-2", schema_for_eval()),
         ("run", schema_for_run()),
         ("error", schema_for_error()),

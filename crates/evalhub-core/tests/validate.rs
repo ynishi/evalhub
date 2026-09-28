@@ -14,7 +14,6 @@
 
 use std::path::PathBuf;
 
-use evalhub_core::eval::{EvalSchema, declared_schema};
 use evalhub_core::validate;
 use evalhub_schema::RecordKind;
 use evalhub_schema::error::ErrorCode;
@@ -112,31 +111,6 @@ fn not_an_object_is_one_schema_error() {
 }
 
 #[test]
-fn a_1_0_body_is_declared_v1_and_still_valid() {
-    let body = read("eval-run-set-v1.json");
-    assert_eq!(declared_schema(&body), Some(EvalSchema::V1));
-    assert_eq!(validate(RecordKind::Eval, &body), vec![]);
-}
-
-#[test]
-fn declared_schema_reads_only_the_identifier() {
-    assert_eq!(
-        declared_schema(&read("valid-eval.json")),
-        Some(EvalSchema::V2)
-    );
-    assert_eq!(declared_schema(&read("eval-schema-unknown.json")), None);
-    assert_eq!(declared_schema(&read("valid-card.json")), None);
-    assert_eq!(declared_schema(&json!({})), None);
-    assert_eq!(declared_schema(&json!({"schema": 2})), None);
-    assert_eq!(declared_schema(&json!([1])), None);
-    // Every accepted Eval identifier is one of the two arms, and back.
-    for id in RecordKind::Eval.schema_ids() {
-        let arm = declared_schema(&json!({ "schema": id })).unwrap();
-        assert_eq!(arm.id(), *id);
-    }
-}
-
-#[test]
 fn runs_moved_is_the_only_error_and_names_the_run_endpoints() {
     let body = read("eval-runs-moved.json");
     let errors = validate(RecordKind::Eval, &body);
@@ -162,19 +136,47 @@ fn runs_moved_is_the_only_error_and_names_the_run_endpoints() {
 }
 
 #[test]
-fn a_1_0_body_under_the_2_0_identifier_is_runs_moved_and_the_reverse_is_a_schema_error() {
+fn a_1_0_body_under_the_2_0_identifier_is_runs_moved() {
     let mut body = read("eval-run-set-v1.json");
     body["schema"] = json!("evalhub.eval/2.0");
     let errors = validate(RecordKind::Eval, &body);
     assert_eq!(errors.len(), 1);
     assert_eq!(errors[0].code, ErrorCode::RunsMoved);
+}
 
-    // A 2.0 header declaring 1.0 is checked against the 1.0 document, which
-    // it satisfies (1.0 had every header key), so it is accepted as a 1.0
-    // body with no runs.
+/// The window for `evalhub.eval/1.0` is closed: a body declaring it gets
+/// the one error a 2.0 header with `runs` gets, `runs_moved` at `/runs`,
+/// whether or not it has `runs`, and whatever else is wrong with it.
+#[test]
+fn a_body_declaring_1_0_is_runs_moved_with_or_without_runs() {
+    let with_runs = read("eval-run-set-v1.json");
+    let mut without_runs = read("eval-run-set-v1.json");
+    without_runs.as_object_mut().unwrap().remove("runs");
     let mut header = read("valid-eval.json");
     header["schema"] = json!("evalhub.eval/1.0");
-    assert_eq!(validate(RecordKind::Eval, &header), vec![]);
+    let mut broken = read("eval-run-refs.json");
+    broken["unknown_key"] = json!(true);
+    for (what, body) in [
+        ("1.0 body with runs", with_runs),
+        ("1.0 body without runs", without_runs),
+        ("2.0 header declaring 1.0", header),
+        ("1.0 body with other errors", broken),
+    ] {
+        let errors = validate(RecordKind::Eval, &body);
+        assert_eq!(errors.len(), 1, "{what}: {errors:?}");
+        assert_eq!(errors[0].code, ErrorCode::RunsMoved, "{what}");
+        assert_eq!(errors[0].path, "/runs", "{what}");
+        let hint = errors[0].hint.as_deref().unwrap();
+        assert!(hint.contains("evalhub.eval/2.0"), "{what}: {hint}");
+        assert!(
+            hint.contains("PUT /evals/{ns}/{name}/runs/{run_id}"),
+            "{what}: {hint}"
+        );
+        assert!(
+            hint.contains("POST /evals/{ns}/{name}/runs:batch"),
+            "{what}: {hint}"
+        );
+    }
 }
 
 #[test]
@@ -248,11 +250,6 @@ fn a_date_time_that_is_not_rfc_3339_is_a_schema_error_at_its_path() {
                 &json!({"run_id": "r1", "status": "ok", "started_at": "2026-09-20 10:00:00Z"}),
             ),
             "/started_at",
-        ),
-        (
-            "eval 1.0 runs[].started_at",
-            validate(RecordKind::Eval, &read("eval-v1-started-at-invalid.json")),
-            "/runs/0/started_at",
         ),
     ];
     let mut wrong = Vec::new();

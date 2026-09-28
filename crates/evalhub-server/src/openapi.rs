@@ -8,8 +8,8 @@
 //! the shared error responses) come from `evalhub_schema::openapi`.
 //!
 //! `GET /schemas/{name}` serves the generated JSON Schemas
-//! (`evalhub_schema::SCHEMA_NAMES`: `card`, `eval` (the 1.0 Eval, accepted
-//! until 0.3.0), `eval-2` (the Eval header), `run`, `error`, `query`) with
+//! (`evalhub_schema::SCHEMA_NAMES`: `card`, `eval-2` (the Eval header),
+//! `run`, `error`, `query`; `eval`, the 1.0 Eval, was removed in 0.4.0) with
 //! `$id` set to that URL, so a `$ref` from `openapi.json` resolves to the
 //! same bytes a client would fetch directly.
 //!

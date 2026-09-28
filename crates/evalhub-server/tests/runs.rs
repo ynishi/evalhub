@@ -346,20 +346,6 @@ async fn a_timestamp_that_is_not_rfc_3339_is_a_schema_error() {
     )
     .await;
     assert_eq!(page["items"], json!([]), "nothing was written: {page}");
-
-    hub.ready_attachments(common::EVAL_V1).await;
-    let mut v1: Value = serde_json::from_str(common::EVAL_V1).unwrap();
-    v1["runs"][0]["started_at"] = json!("yesterday");
-    let (status, body) = hub
-        .call(
-            Method::POST,
-            "/api/v1/evals/alice/legacy-bad-time",
-            Some(&alice),
-            Some(&v1.to_string()),
-        )
-        .await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
-    assert_eq!(at(&body), one("/runs/0/started_at"), "{body}");
 }
 
 /// A batch with invalid elements writes nothing and lists every failing
@@ -553,69 +539,76 @@ async fn a_2_0_header_with_runs_is_runs_moved() {
     assert_eq!(err["errors"][0]["code"], "runs_moved");
 }
 
-/// A 1.0 body is converted: `201` with `Deprecation`, `converted_from`
-/// and the runs; the runs are on `GET …/runs`; the same body again is a
-/// no-op; a run the run rules refuse is a `422`, not a `500`.
+/// The `evalhub.eval/1.0` window (0.2.0 and 0.3.0) is closed: a body
+/// declaring it is `422` with the one error a 2.0 header carrying `runs`
+/// gets, `runs_moved`, with or without `runs`; no `Deprecation` header,
+/// no conversion, nothing written.
 #[tokio::test]
-async fn a_1_0_body_is_converted_for_one_release() {
+async fn a_1_0_body_is_refused_with_runs_moved() {
     let hub = Hub::start().await;
     let alice = hub.user("alice", Scope::Write).await;
     hub.ready_attachments(common::EVAL_V1).await;
     let url = "/api/v1/evals/alice/legacy";
-    let (status, headers, env) = hub
-        .call_full(Method::POST, url, Some(&alice), Some(common::EVAL_V1))
-        .await;
-    assert_eq!(status, StatusCode::CREATED, "{env}");
-    assert_eq!(
-        headers.get("deprecation").map(|v| v.to_str().unwrap()),
-        Some("@1790294400")
-    );
-    assert_eq!(env["converted_from"], "evalhub.eval/1.0");
-    assert_eq!(env["converted_runs"]["runs"][0]["run_id"], "r1");
-    assert_eq!(env["converted_runs"]["runs"][0]["result"], "created");
 
-    // The stored version is the 2.0 header, and content_hash is its hash.
-    let (_, read) = get(&hub, url, Some(&alice)).await;
-    assert_eq!(read["record"]["schema"], "evalhub.eval/2.0");
-    assert!(read["record"].get("runs").is_none(), "{read}");
-    assert_eq!(read["content_hash"], env["content_hash"]);
-    assert_eq!(read["runs"]["count"], 1);
-    assert_eq!(
-        read["runs"]["runs_hash"],
-        env["converted_runs"]["runs_hash"]
-    );
+    let mut without_runs: Value = serde_json::from_str(common::EVAL_V1).unwrap();
+    without_runs.as_object_mut().unwrap().remove("runs");
+    for (what, body) in [
+        ("with runs", common::EVAL_V1.to_string()),
+        ("without runs", without_runs.to_string()),
+    ] {
+        let (status, headers, err) = hub
+            .call_full(Method::POST, url, Some(&alice), Some(&body))
+            .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{what}: {err}");
+        assert!(!headers.contains_key("deprecation"), "{what}: {headers:?}");
+        let errors = err["errors"].as_array().unwrap();
+        assert_eq!(errors.len(), 1, "{what}: {err}");
+        assert_eq!(errors[0]["code"], "runs_moved", "{what}: {err}");
+        assert_eq!(errors[0]["path"], "/runs", "{what}: {err}");
+        let hint = errors[0]["hint"].as_str().unwrap();
+        assert!(
+            hint.contains("PUT /evals/{ns}/{name}/runs/{run_id}"),
+            "{what}: {hint}"
+        );
+        assert!(
+            hint.contains("POST /evals/{ns}/{name}/runs:batch"),
+            "{what}: {hint}"
+        );
+        assert!(err.get("converted_from").is_none(), "{what}: {err}");
+    }
 
-    let (_, page) = get(&hub, &format!("{url}/runs"), Some(&alice)).await;
-    assert_eq!(run_ids(&page), ["r1"]);
-    assert_eq!(page["items"][0]["status"], "ok");
+    let (status, _) = get(&hub, url, Some(&alice)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "nothing was stored");
+}
 
-    let (status, headers, again) = hub
-        .call_full(Method::POST, url, Some(&alice), Some(common::EVAL_V1))
-        .await;
-    assert_eq!(status, StatusCode::OK, "{again}");
-    assert!(headers.contains_key("deprecation"));
-    assert_eq!(again["seq"], env["seq"]);
-    assert_eq!(again["converted_runs"]["runs"][0]["result"], "unchanged");
+/// `runs_moved` stays the only error when the body has other faults the
+/// server itself checks: an `attachments[].sha256` that is not 64 hex
+/// characters, on a 1.0 body and on a 2.0 header carrying `runs`.
+#[tokio::test]
+async fn runs_moved_is_the_only_error_even_with_a_bad_attachment_sha256() {
+    let hub = Hub::start().await;
+    let alice = hub.user("alice", Scope::Write).await;
 
-    let mut bad: Value = serde_json::from_str(common::EVAL_V1).unwrap();
-    bad["runs"][0]["run_id"] = json!("a/b");
-    let (status, err) = hub
-        .call(
-            Method::POST,
-            "/api/v1/evals/alice/legacy-bad",
-            Some(&alice),
-            Some(&bad.to_string()),
-        )
-        .await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{err}");
-    assert!(
-        err["errors"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|e| e["code"] == "run_id_invalid" && e["path"] == "/runs/0/run_id"),
-        "{err}"
-    );
+    let mut v1: Value = serde_json::from_str(common::EVAL_V1).unwrap();
+    v1["attachments"][0]["sha256"] = json!("not-hex");
+    let mut v2: Value = serde_json::from_str(EVAL).unwrap();
+    v2["runs"] = json!([{"run_id": "r1", "status": "ok"}]);
+    v2["attachments"] = json!([{"path": "a.txt", "sha256": "not-hex", "size": 1}]);
+    for (what, body) in [("1.0 body", v1), ("2.0 header with runs", v2)] {
+        let (status, err) = hub
+            .call(
+                Method::POST,
+                "/api/v1/evals/alice/bad-sha",
+                Some(&alice),
+                Some(&body.to_string()),
+            )
+            .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{what}: {err}");
+        let errors = err["errors"].as_array().unwrap();
+        assert_eq!(errors.len(), 1, "{what}: {err}");
+        assert_eq!(errors[0]["code"], "runs_moved", "{what}: {err}");
+        assert_eq!(errors[0]["path"], "/runs", "{what}: {err}");
+    }
 }
 
 /// A public Card whose run_results judge runs of a private Eval shows an
@@ -1294,8 +1287,8 @@ async fn run_and_migration_actions_are_audited() {
 }
 
 /// Insert `eval/alice/{name}` with one live `evalhub.eval/1.0` version, as
-/// 0.1.x stored it, with plain SQL: the 0.2.0 write path converts such a
-/// body on the way in and can no longer produce the row.
+/// 0.1.x stored it, with plain SQL: the write path refuses such a body
+/// (`runs_moved`) and can no longer produce the row.
 async fn seed_v1_eval(hub: &Hub, name: &str) {
     let body: Value = serde_json::from_str(common::EVAL_V1).unwrap();
     let (bytes, hash) = evalhub_core::canonical::hash_value(&body).unwrap();

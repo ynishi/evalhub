@@ -1,8 +1,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 //! Run rows against a real Postgres (and MinIO for the GC case): put,
-//! batch, archive, delete, `runs_hash`, materialisation, the
-//! `evalhub.eval/1.0` ingest split, GC and download references, audit.
+//! batch, archive, delete, `runs_hash`, materialisation, GC and download
+//! references, audit.
 //! Needs Docker.
 
 mod common;
@@ -21,7 +21,7 @@ use evalhub_store::auth::{self, NamespaceKind};
 use evalhub_store::error::StoreError;
 use evalhub_store::objects;
 use evalhub_store::records::{
-    self, Actor, CreateOutcome, IngestFacts, Ingested, NewAttachmentRef, NewVersion, RecordType,
+    self, Actor, CreateOutcome, IngestFacts, NewAttachmentRef, NewVersion, RecordType,
     TombstoneReason, TombstoneRequest, Visibility,
 };
 use evalhub_store::runs::{self, RunChange};
@@ -68,7 +68,7 @@ async fn ready(pool: &PgPool, shas: &[&str]) {
 
 /// `alice` namespace, a public Eval `alice/{name}` with the 2.0 header
 /// fixture, and the fixture digests ready.
-async fn setup(pool: &PgPool, name: &str) -> Ingested {
+async fn setup(pool: &PgPool, name: &str) -> CreateOutcome {
     auth::ensure_namespace(pool, "alice", NamespaceKind::User)
         .await
         .unwrap();
@@ -89,11 +89,11 @@ async fn setup(pool: &PgPool, name: &str) -> Ingested {
 
 /// POST an Eval body the way the server does: canonical form, its hash,
 /// its fingerprints and attachment rows.
-async fn post(pool: &PgPool, name: &str, body: &Value) -> Ingested {
+async fn post(pool: &PgPool, name: &str, body: &Value) -> CreateOutcome {
     try_post(pool, name, body).await.unwrap()
 }
 
-async fn try_post(pool: &PgPool, name: &str, body: &Value) -> Result<Ingested, StoreError> {
+async fn try_post(pool: &PgPool, name: &str, body: &Value) -> Result<CreateOutcome, StoreError> {
     let (bytes, hash) = hash_value(body).unwrap();
     let canonical: Value = serde_json::from_slice(&bytes).unwrap();
     let fps = evalhub_core::fingerprints(RecordKind::Eval, &canonical).unwrap();
@@ -119,7 +119,7 @@ async fn try_post(pool: &PgPool, name: &str, body: &Value) -> Result<Ingested, S
             sha256: *sha256,
         })
         .collect();
-    records::ingest(
+    records::create_or_append(
         pool,
         NewVersion {
             record_type: RecordType::Eval,
@@ -175,7 +175,7 @@ fn rejections(err: StoreError) -> Vec<evalhub_store::error::RunRejection> {
 async fn put_creates_then_is_idempotent_then_updates() {
     let db = common::db().await;
     let pool = &db.pool;
-    let record_id = setup(pool, "e").await.outcome.meta().record_id;
+    let record_id = setup(pool, "e").await.meta().record_id;
     let run = fixture("run.json");
 
     let first = runs::put(pool, "alice", "e", "r1", &run, Actor::default())
@@ -308,7 +308,7 @@ async fn put_creates_then_is_idempotent_then_updates() {
 async fn an_unparseable_timestamp_is_refused_at_its_path_and_nothing_is_stored() {
     let db = common::db().await;
     let pool = &db.pool;
-    let record_id = setup(pool, "e").await.outcome.meta().record_id;
+    let record_id = setup(pool, "e").await.meta().record_id;
     for (key, bad) in [("started_at", "yesterday"), ("ended_at", "2026-09-20")] {
         let mut run = json!({"run_id": "r1", "status": "ok"});
         run[key] = json!(bad);
@@ -339,7 +339,7 @@ async fn an_unparseable_timestamp_is_refused_at_its_path_and_nothing_is_stored()
 async fn an_accepted_run_with_a_timestamp_always_fills_the_column() {
     let db = common::db().await;
     let pool = &db.pool;
-    let record_id = setup(pool, "e").await.outcome.meta().record_id;
+    let record_id = setup(pool, "e").await.meta().record_id;
     let forms = [
         "2026-09-20T10:00:00Z",
         "2026-09-20T19:00:00+09:00",
@@ -372,7 +372,7 @@ async fn an_accepted_run_with_a_timestamp_always_fills_the_column() {
 async fn archive_keeps_the_hash_and_hides_from_non_members() {
     let db = common::db().await;
     let pool = &db.pool;
-    let record_id = setup(pool, "e").await.outcome.meta().record_id;
+    let record_id = setup(pool, "e").await.meta().record_id;
     let run = fixture("run.json");
     let put = runs::put(pool, "alice", "e", "r1", &run, Actor::default())
         .await
@@ -463,7 +463,7 @@ async fn archive_keeps_the_hash_and_hides_from_non_members() {
 async fn tombstone_keeps_hash_and_metrics_and_refuses_the_id() {
     let db = common::db().await;
     let pool = &db.pool;
-    let record_id = setup(pool, "e").await.outcome.meta().record_id;
+    let record_id = setup(pool, "e").await.meta().record_id;
     let run = fixture("run.json");
     let put = runs::put(pool, "alice", "e", "r1", &run, Actor::default())
         .await
@@ -553,7 +553,7 @@ async fn tombstone_keeps_hash_and_metrics_and_refuses_the_id() {
 async fn batch_is_all_or_nothing_and_reports_every_failure() {
     let db = common::db().await;
     let pool = &db.pool;
-    let record_id = setup(pool, "e").await.outcome.meta().record_id;
+    let record_id = setup(pool, "e").await.meta().record_id;
 
     let good = json!({"run_id": "a", "status": "ok", "metrics": {"core/accuracy": 1.0}});
     // `error` status without `error`.
@@ -657,8 +657,7 @@ async fn a_materialised_facet_survives_a_later_header() {
     let mut header = fixture("eval-run-set.json");
     header["model"] = json!({"id": "other-model"});
     let out = post(pool, "e", &header).await;
-    assert!(matches!(out.outcome, CreateOutcome::Created { .. }));
-    assert!(out.converted.is_none());
+    assert!(matches!(out, CreateOutcome::Created { .. }));
 
     let again = runs::get(pool, "alice", "e", "r1", &[])
         .await
@@ -682,155 +681,6 @@ async fn a_materialised_facet_survives_a_later_header() {
         .unwrap()
         .unwrap();
     assert_eq!(r2.body.as_ref().unwrap()["model"]["id"], "other-model");
-}
-
-#[tokio::test]
-async fn a_1_0_body_is_split_into_a_header_and_runs() {
-    let db = common::db().await;
-    let pool = &db.pool;
-    auth::ensure_namespace(pool, "alice", NamespaceKind::User)
-        .await
-        .unwrap();
-    ready(pool, &[SHA_CALLS, SHA_DIFF]).await;
-
-    let mut v1 = fixture("eval-run-set-v1.json");
-    let second = json!({"run_id": "r2", "outcome": "error"});
-    v1["runs"].as_array_mut().unwrap().push(second);
-
-    let out = post(pool, "legacy", &v1).await;
-    let CreateOutcome::Created { meta, .. } = &out.outcome else {
-        panic!("expected a new version, got {:?}", out.outcome);
-    };
-    let record_id = meta.record_id;
-    let converted = out.converted.clone().unwrap();
-    assert_eq!(converted.converted_from, "evalhub.eval/1.0");
-    assert_eq!(
-        converted
-            .runs
-            .runs
-            .iter()
-            .map(|w| (w.run_id.as_str(), w.change, w.status.as_str()))
-            .collect::<Vec<_>>(),
-        [
-            ("r1", RunChange::Created, "ok"),
-            ("r2", RunChange::Created, "error")
-        ]
-    );
-    assert!(converted.duplicate_run_ids.is_empty());
-
-    // The stored body is the 2.0 header and the hash is the header's.
-    let split = evalhub_core::split_v1(&v1);
-    let (_, header_hash) = hash_value(&split.header).unwrap();
-    assert_eq!(meta.content_hash, header_hash.as_bytes().to_vec());
-    let latest = records::get_latest(pool, RecordType::Eval, "alice", "legacy", &member())
-        .await
-        .unwrap()
-        .unwrap();
-    let body = latest.body.unwrap();
-    assert_eq!(body["schema"], "evalhub.eval/2.0");
-    assert!(body.get("runs").is_none());
-    let r1 = runs::get(pool, "alice", "legacy", "r1", &member())
-        .await
-        .unwrap()
-        .unwrap();
-    let r1_body = r1.body.unwrap();
-    assert_eq!(r1_body["meta"]["v0.2.0_migration"]["outcome"], "pass");
-    assert_eq!(r1_body["model"]["id"], "qwen3.6-32b");
-    assert_eq!(
-        count(
-            pool,
-            "SELECT COUNT(*) FROM run_attachment_refs WHERE record_id = $1",
-            record_id
-        )
-        .await,
-        2
-    );
-    let audit_before = audit_actions(pool).await.len();
-    assert_eq!(audit_before, 2);
-
-    // Re-posting the same body: no version, no run row, no audit row.
-    let again = post(pool, "legacy", &v1).await;
-    assert!(matches!(again.outcome, CreateOutcome::Existing(_)));
-    assert!(
-        again
-            .converted
-            .unwrap()
-            .runs
-            .runs
-            .iter()
-            .all(|w| w.change == RunChange::Unchanged)
-    );
-    assert_eq!(audit_actions(pool).await.len(), audit_before);
-    assert_eq!(
-        count(
-            pool,
-            "SELECT COUNT(*) FROM versions WHERE record_id = $1",
-            record_id
-        )
-        .await,
-        1
-    );
-
-    // One more run: one row, no header version.
-    v1["runs"]
-        .as_array_mut()
-        .unwrap()
-        .push(json!({"run_id": "r3", "outcome": "skipped"}));
-    let third = post(pool, "legacy", &v1).await;
-    assert!(matches!(third.outcome, CreateOutcome::Existing(_)));
-    let changes: Vec<RunChange> = third
-        .converted
-        .unwrap()
-        .runs
-        .runs
-        .iter()
-        .map(|w| w.change)
-        .collect();
-    assert_eq!(
-        changes,
-        [
-            RunChange::Unchanged,
-            RunChange::Unchanged,
-            RunChange::Created
-        ]
-    );
-    assert_eq!(
-        count(
-            pool,
-            "SELECT COUNT(*) FROM versions WHERE record_id = $1",
-            record_id
-        )
-        .await,
-        1
-    );
-    assert_eq!(
-        count(
-            pool,
-            "SELECT COUNT(*) FROM runs WHERE record_id = $1",
-            record_id
-        )
-        .await,
-        3
-    );
-
-    // A refused run refuses the post and names its position in runs[].
-    runs::tombstone(
-        pool,
-        "alice",
-        "legacy",
-        "r2",
-        TombstoneRequest {
-            reason: TombstoneReason::Duplicate,
-            note: None,
-        },
-        Actor::default(),
-    )
-    .await
-    .unwrap();
-    let err = try_post(pool, "legacy", &v1).await.unwrap_err();
-    let r = rejections(err);
-    assert_eq!((r[0].index, r[0].run_id.as_str()), (1, "r2"));
-    assert_eq!(r[0].errors[0].code, ErrorCode::RunDeleted);
 }
 
 #[tokio::test]

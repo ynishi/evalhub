@@ -1,21 +1,33 @@
-//! The two Eval schema arms, and the one 1.0 → 2.0 conversion.
+//! The `evalhub.eval/1.0` shape as `0003_runs_split` reads it, and the one
+//! 1.0 → 2.0 conversion.
 //!
-//! Release 0.2.0 accepts two majors of the Eval record schema (see
-//! "Versioning of the schema itself" in `evalhub_schema`):
+//! Release 0.1.x stored an Eval as one `evalhub.eval/1.0` body, header and
+//! `runs[]` together. Releases 0.2.0 and 0.3.0 also accepted such a body on
+//! `POST` and converted it at ingest; release 0.4.0 refuses it
+//! (`422 runs_moved`, from `evalhub_core::validate`), and the public crates
+//! no longer describe the 1.0 shape. What is left of it lives here,
+//! internal to `evalhub-store` (an unpublished crate) and used by its data
+//! migration ([`super`]), because a 0.1.x database must still migrate: this
+//! module is the migration's own copy of the 1.0 reading, and nothing on a
+//! request path calls it. It is `pub` only so that the store's own tests
+//! can reach it.
+//!
+//! The shape is read from a `serde_json::Value`, not a typed struct, and
+//! only the keys the conversion needs are looked at:
 //!
 //! ```text
-//! evalhub.eval/1.0   header + runs[] in one body          (accepted by 0.2.0 only)
-//! evalhub.eval/2.0   header only; runs are rows of the record, written apart
+//! 1.0 body   schema "evalhub.eval/1.0", attachments[].path, the six facets,
+//!            runs[] { run_id, outcome, started_at, ended_at, calls, artifacts[] }
 //! ```
 //!
-//! [`declared_schema`] says which arm a body declares, so that the
-//! validator, the store and the server agree on it without each parsing
-//! `schema` for themselves. [`split_v1`] turns a 1.0 body into what a 2.0
-//! producer would have sent: a header and one run per `runs[]` element. It
-//! is the only implementation of that conversion; the ingest of a 1.0 body
-//! and the one-shot data migration of stored 1.0 versions both call it, so
-//! a run converted at ingest and a run converted by the migration are the
-//! same run, byte for byte, and have the same content hash.
+//! Every other key of the body is carried into the header unread, as the
+//! conversion has always done.
+//!
+//! [`split_v1`] turns a 1.0 body into what a 2.0 producer would have sent:
+//! a header and one run per `runs[]` element. The 0.2.0 / 0.3.0 ingest
+//! used the same function, so a run those releases converted at ingest and
+//! a run this migration converts are the same run, byte for byte, with the
+//! same content hash.
 //!
 //! # The conversion
 //!
@@ -48,13 +60,12 @@
 //! `outcome` is kept verbatim in the run's `meta`, under
 //! [`V1_MIGRATION_META_KEY`] (`v0.2.0_migration`), so the verdict a 0.1.x
 //! producer wrote is not lost; it is simply no longer the hub's to
-//! interpret. A later release that has to drop a meaning again keeps it the
-//! same way, under its own `v{version}_migration` key.
+//! interpret.
 //!
 //! The run's facets are the header's, copied onto the run
-//! ([`crate::run::materialise`]); `split_v1` owns materialisation on this
-//! path, so the run write path's own `materialise`, which is idempotent,
-//! finds nothing left to copy.
+//! (`evalhub_core::run::materialise`); `split_v1` owns materialisation on
+//! this path, so the run write path's own `materialise`, which is
+//! idempotent, finds nothing left to copy.
 //!
 //! A 1.0 run's `calls` and `artifacts[]` named paths in the *body's*
 //! `attachments[]`. A 2.0 run points only into its own, so each header
@@ -65,7 +76,7 @@ use serde_json::{Map, Value};
 
 use evalhub_schema::EVAL_SCHEMA;
 
-use crate::run::materialise;
+use evalhub_core::run::materialise;
 
 /// The `meta` key under which the 1.0 → 2.0 conversion keeps what it
 /// dropped: `{ "v0.2.0_migration": { "outcome": … } }`.
@@ -75,41 +86,13 @@ pub const V1_MIGRATION_META_KEY: &str = "v0.2.0_migration";
 /// `error.kind` of an `error` run, the `skip_reason` of a `skipped` one.
 pub const UNRECORDED: &str = "unrecorded";
 
-/// The `evalhub.eval/1.0` identifier.
-const EVAL_SCHEMA_1_0: &str = "evalhub.eval/1.0";
+/// The `evalhub.eval/1.0` identifier, as 0.1.x stored it.
+pub const EVAL_SCHEMA_1_0: &str = "evalhub.eval/1.0";
 
-/// Which major of the Eval schema a body declares.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum EvalSchema {
-    /// `evalhub.eval/1.0`: `runs[]` in the body. Accepted by release 0.2.0
-    /// only; converted by [`split_v1`].
-    V1,
-    /// `evalhub.eval/2.0`: the header alone.
-    V2,
-}
-
-impl EvalSchema {
-    /// The identifier a body declares for this arm.
-    pub const fn id(self) -> &'static str {
-        match self {
-            EvalSchema::V1 => EVAL_SCHEMA_1_0,
-            EvalSchema::V2 => EVAL_SCHEMA,
-        }
-    }
-}
-
-/// The Eval arm `body` declares in its `schema` key, or `None` when the key
-/// is absent, not a string, or not an accepted Eval identifier.
-///
-/// This reads one key and checks nothing else; a body that declares an arm
-/// can still fail that arm's validation. `None` means the body is not an
-/// Eval the hub accepts, and [`crate::validate::validate`] reports why.
-pub fn declared_schema(body: &Value) -> Option<EvalSchema> {
-    match body.get("schema").and_then(Value::as_str)? {
-        EVAL_SCHEMA => Some(EvalSchema::V2),
-        EVAL_SCHEMA_1_0 => Some(EvalSchema::V1),
-        _ => None,
-    }
+/// Whether a stored body declares `evalhub.eval/1.0` in its `schema` key.
+/// Reads that one key and nothing else.
+pub fn declares_v1(body: &Value) -> bool {
+    body.get("schema").and_then(Value::as_str) == Some(EVAL_SCHEMA_1_0)
 }
 
 /// A 1.0 body split into its 2.0 parts. See [`split_v1`].
@@ -137,9 +120,9 @@ pub struct SplitV1 {
 /// do not fail the call: the last element with an id wins, and the ids are
 /// listed in [`SplitV1::duplicate_run_ids`].
 ///
-/// Meant for a body [`crate::validate::validate`] accepted as 1.0. On
-/// anything else it still returns, without guessing more than it must: a
-/// body that is not an object is returned as the header with no runs; a
+/// Meant for a stored 1.0 body, which 0.1.x validated when it was posted.
+/// On anything else it still returns, without guessing more than it must:
+/// a body that is not an object is returned as the header with no runs; a
 /// `runs[]` element without a string `run_id` is dropped; an `outcome`
 /// other than the four 1.0 values is treated as `error` (`unrecorded`),
 /// and kept verbatim in `meta` like any other.

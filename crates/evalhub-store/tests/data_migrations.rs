@@ -13,9 +13,9 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use evalhub_core::canonical::hash_value;
-use evalhub_core::eval::split_v1;
 use evalhub_core::run::{run_content_hash, runs_hash};
 use evalhub_store::PgPool;
+use evalhub_store::data_migrations::v1::split_v1;
 use evalhub_store::data_migrations::{ALL, RUNS_SPLIT};
 use evalhub_store::error::StoreError;
 use evalhub_store::pool::{self, PendingMigration};

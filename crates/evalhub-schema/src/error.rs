@@ -25,7 +25,7 @@
 //! | `type_mismatch`          | 422    | query: operator applied to a path of another type                    |
 //! | `not_indexed`            | 422    | query: operator needs an index the path does not have                |
 //! | `unknown_path`           | 422    | query: path not in the schema                                        |
-//! | `runs_moved`             | 422    | an `evalhub.eval/2.0` header carries `runs`; runs are written apart  |
+//! | `runs_moved`             | 422    | an `evalhub.eval/2.0` header carries `runs`, or the body declares `evalhub.eval/1.0`; runs are written apart |
 //! | `run_status_detail`      | 422    | `error` present iff `status` is `error`, `skip_reason` iff `skipped` |
 //! | `run_id_invalid`         | 422    | `run_id` empty, containing `/`, or over 200 bytes                    |
 //! | `run_id_mismatch`        | 422    | the `run_id` in the body differs from the one in the path            |
@@ -95,8 +95,9 @@ pub enum ErrorCode {
     /// A registry entry already exists at that address. Entries are
     /// immutable, so a correction is a new version.
     RegistryEntryExists,
-    /// An `evalhub.eval/2.0` Eval header carries `runs`. Runs are not part
-    /// of the header; they are written one by one or in a batch.
+    /// An `evalhub.eval/2.0` Eval header carries `runs`, or the body
+    /// declares `evalhub.eval/1.0` (with or without `runs`). Runs are not
+    /// part of the header; they are written one by one or in a batch.
     RunsMoved,
     /// A run's `status` and its detail disagree: `error` must be present
     /// exactly when `status` is `error`, `skip_reason` exactly when it is
