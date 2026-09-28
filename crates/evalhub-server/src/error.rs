@@ -138,9 +138,8 @@ impl ApiError {
     /// A refused run write ([`StoreError::RunsRejected`]) as a response.
     ///
     /// With `indexed`, each entry's `path` is prefixed with
-    /// `/runs/{index}`, the element's position in the request's `runs[]`
-    /// (a batch, or the `runs[]` of an `evalhub.eval/1.0` body), so every
-    /// failing element is named with its index; without it (a single
+    /// `/runs/{index}`, the element's position in the batch's `runs[]`, so
+    /// every failing element is named with its index; without it (a single
     /// `PUT`) the paths point into the run body as sent.
     ///
     /// The status is `409` when every entry of every element carries a

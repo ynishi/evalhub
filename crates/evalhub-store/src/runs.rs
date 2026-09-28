@@ -22,9 +22,7 @@
 //!
 //! # Write ordering
 //!
-//! [`put`] and [`put_batch`] share one implementation; the ingest of an
-//! `evalhub.eval/1.0` body ([`crate::records::ingest`]) calls the same one
-//! for the runs it split off. In one transaction:
+//! [`put`] and [`put_batch`] share one implementation. In one transaction:
 //!
 //! ```text
 //! 1. lock the record row                       SELECT … FOR UPDATE (as the header ingest)
@@ -575,8 +573,7 @@ pub(crate) struct Checked {
 
 /// Steps 2–6 of the module doc for `inputs`, inside the caller's
 /// transaction, which already holds the record lock. `header` is the body
-/// facets are materialised from. Shared by [`put`], [`put_batch`] and the
-/// `evalhub.eval/1.0` ingest in [`crate::records`].
+/// facets are materialised from. Shared by [`put`] and [`put_batch`].
 pub(crate) async fn write_runs(
     tx: &mut Transaction<'_, Postgres>,
     record_id: Uuid,

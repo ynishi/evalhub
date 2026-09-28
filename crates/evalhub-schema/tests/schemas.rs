@@ -153,7 +153,7 @@ fn schema_identifier_constants_match_the_schema_const() {
         assert!(kind.schema_for("evalhub.nope/1.0").is_none());
     }
 
-    // The Card's two minors share one document; the Eval's majors do not.
+    // The Card's two minors share one document.
     assert_eq!(
         accepted_ids(&evalhub_schema::schema_for_card()),
         ["evalhub.card/1.0", "evalhub.card/1.1"]
@@ -166,14 +166,28 @@ fn schema_identifier_constants_match_the_schema_const() {
         accepted_ids(&evalhub_schema::schema_for_eval()),
         [evalhub_schema::EVAL_SCHEMA]
     );
-    assert_eq!(
-        accepted_ids(&evalhub_schema::schema_for_eval_v1()),
-        ["evalhub.eval/1.0"]
-    );
     assert!(RecordKind::Eval.schema_for("evalhub.card/1.1").is_none());
     assert!(
         RecordKind::Card
             .schema_for(evalhub_schema::EVAL_SCHEMA)
             .is_none()
+    );
+}
+
+/// The compatibility window for `evalhub.eval/1.0` (releases 0.2.0 and
+/// 0.3.0) is closed: the Eval kind accepts only its current identifier,
+/// the 1.0 identifier has no document, and no `eval` schema is served.
+#[test]
+fn the_eval_1_0_window_is_closed() {
+    use evalhub_schema::RecordKind;
+
+    assert_eq!(RecordKind::Eval.schema_ids(), [evalhub_schema::EVAL_SCHEMA]);
+    assert!(
+        RecordKind::Eval.schema_for("evalhub.eval/1.0").is_none(),
+        "evalhub.eval/1.0 still has a document"
+    );
+    assert_eq!(
+        evalhub_schema::SCHEMA_NAMES.as_slice(),
+        ["card", "eval-2", "run", "error", "query"].as_slice()
     );
 }

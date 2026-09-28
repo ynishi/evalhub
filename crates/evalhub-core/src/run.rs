@@ -24,8 +24,9 @@
 //! is the run's claim and wins.
 //!
 //! Materialisation is a pure function here, rather than a step inside the
-//! store, so that the run write path and the 1.0 → 2.0 conversion
-//! ([`crate::eval::split_v1`]) share one implementation.
+//! store, so that the run write path and the 1.0 → 2.0 conversion of the
+//! store's data migration (`evalhub_store::data_migrations::v1`) share one
+//! implementation.
 //!
 //! # Hashes
 //!

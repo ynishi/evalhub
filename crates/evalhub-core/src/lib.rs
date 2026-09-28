@@ -13,12 +13,11 @@
 //!
 //! There are two record kinds, a Card and an Eval, each an append-only
 //! sequence of immutable versions under a name (the one exception is the
-//! 0.2.0 data migration of stored 1.0 bodies, which runs through
-//! [`eval::split_v1`] here and is `evalhub_store`'s to perform and
-//! audit). An Eval's versioned body is
-//! a *header*; its runs are rows of the Eval record, outside every version.
-//! Writing a run does not append a header version, and a header version
-//! does not rewrite a run.
+//! 0.2.0 data migration of stored 1.0 bodies, which is `evalhub_store`'s
+//! to perform and audit). An Eval's versioned body is a *header*; its runs
+//! are rows of the Eval record, outside every version. Writing a run does
+//! not append a header version, and a header version does not rewrite a
+//! run.
 //!
 //! ```text
 //! Eval record {ns}/{name}
@@ -61,7 +60,8 @@
 //! facts around it and never rewrites it.
 //!
 //! One exception to "all errors": an `evalhub.eval/2.0` header that carries
-//! `runs` gets exactly one error, `runs_moved`, naming the run endpoints
+//! `runs`, and any body that declares `evalhub.eval/1.0`, gets exactly one
+//! error, `runs_moved`, naming the run endpoints
 //! (`PUT /evals/{ns}/{name}/runs/{run_id}`,
 //! `POST /evals/{ns}/{name}/runs:batch`).
 //!
@@ -78,16 +78,14 @@
 //!      ──▶ (store) the row, then run::runs_hash over the record's runs
 //! ```
 //!
-//! # The 1.0 arm
+//! # `evalhub.eval/1.0`
 //!
-//! Release 0.2.0 still accepts an `evalhub.eval/1.0` body, with `runs[]` in
-//! it, for one release. [`eval::declared_schema`] tells the caller which
-//! arm a body declares; [`validate()`] checks a 1.0 body as 0.1.x did,
-//! including that its runs' `calls` / `artifacts[]` name the body's
-//! attachments; and [`eval::split_v1`] converts it into the 2.0 header and
-//! runs a 2.0 producer would have written. The ingest of a 1.0 body and the
-//! data migration of stored 1.0 versions both use that one function.
-//! Release 0.3.0 removes the arm.
+//! Releases 0.2.0 and 0.3.0 accepted an `evalhub.eval/1.0` body, with
+//! `runs[]` in it, and converted it at ingest. Release 0.4.0 closed that
+//! window: [`validate()`] answers a body declaring `evalhub.eval/1.0` with
+//! the single `runs_moved` error, and this crate no longer knows the 1.0
+//! shape or its conversion. The conversion of stored 0.1.x bodies belongs
+//! to `evalhub_store`'s data migration, which keeps its own copy.
 //!
 //! # Hashes
 //!
@@ -123,9 +121,6 @@
 //! - **Validation is the same everywhere.** The server, a future CLI
 //!   `evalhub check`, and a harness embedding this crate all reject the same
 //!   records and runs for the same codes.
-//! - **One conversion from 1.0.** A 1.0 run converted at ingest and one
-//!   converted by the migration are the same bytes and the same hash,
-//!   because both go through [`eval::split_v1`].
 //!
 //! # What this crate refuses to do
 //!
@@ -155,7 +150,6 @@
 //!   records and runs.
 //! - [`mod@validate`] — structural and semantic checks, error collection,
 //!   for records and runs.
-//! - [`eval`] — the two Eval schema arms and the 1.0 → 2.0 conversion.
 //! - [`run`] — facet materialisation, the run content hash and `runs_hash`.
 //! - [`badge`] — the badge rules and their inputs.
 //! - [`registry`] — the `core/` registry entries (metrics, relation types)
@@ -164,7 +158,6 @@
 
 pub mod badge;
 pub mod canonical;
-pub mod eval;
 pub mod fingerprint;
 pub mod id;
 pub mod registry;
@@ -173,7 +166,6 @@ pub mod validate;
 
 pub use badge::{Badge, BadgeInput, compute as compute_badges};
 pub use canonical::{ContentHash, canonicalize, content_hash};
-pub use eval::{EvalSchema, SplitV1, declared_schema, split_v1};
 pub use fingerprint::{Facet, Fingerprints, fingerprints};
 pub use id::{RecordId, VersionId};
 pub use run::{materialise, run_content_hash, runs_hash};

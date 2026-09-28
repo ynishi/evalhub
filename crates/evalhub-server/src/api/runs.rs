@@ -270,33 +270,6 @@ impl From<RunsWritten> for BatchResponse {
     }
 }
 
-/// The runs split off an `evalhub.eval/1.0` body by `POST /evals/{ns}/{name}`,
-/// as `POST …/runs:batch` reports runs, plus the ids the body repeated.
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct ConvertedRunsDto {
-    /// One entry per distinct `run_id`, in the order each id first
-    /// appeared in the body's `runs[]`.
-    pub runs: Vec<RunWriteDto>,
-    /// Hex `runs_hash` of the Eval after the write.
-    pub runs_hash: String,
-    /// Every `run_id` that appeared more than once in `runs[]`; the last
-    /// element carrying it is the one written. 0.1.x accepted such
-    /// bodies, so they are not refused.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub duplicate_run_ids: Vec<String>,
-}
-
-impl From<records::Converted> for ConvertedRunsDto {
-    fn from(c: records::Converted) -> Self {
-        let BatchResponse { runs, runs_hash } = c.runs.into();
-        Self {
-            runs,
-            runs_hash,
-            duplicate_run_ids: c.duplicate_run_ids,
-        }
-    }
-}
-
 /// Body of `PATCH …/runs/{run_id}`.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]

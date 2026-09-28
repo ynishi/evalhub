@@ -112,7 +112,7 @@ cargo run -p evalhub-server -- serve --bind 127.0.0.1:8080
 | Login         | `/login`             | Exchange a token for a session.                                                                                  |
 
 The query builder walks its path vocabulary out of `GET /schemas/card` and
-`GET /schemas/eval` rather than a hand-written list, so a key added to the
+`GET /schemas/eval-2` rather than a hand-written list, so a key added to the
 record schema is offered in the same release. What the browser cannot know is
 which paths are _indexed_ — that follows from the migration, not the schema —
 so the builder offers every operator the type allows and shows the hub's

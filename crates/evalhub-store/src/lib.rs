@@ -77,11 +77,6 @@
 //!                      and over runs (current)       used_set_hash, changed_since_card
 //! ```
 //!
-//! Release 0.2.0 still accepts an `evalhub.eval/1.0` body (header and
-//! `runs[]` together); [`records::ingest`] splits it and writes the runs
-//! through the same code as a batch, in the one transaction. See
-//! [`records`].
-//!
 //! The request limits (body size, runs per batch, `run_results` per Card
 //! version) are the server's, checked before this crate is called; the
 //! store enforces none of them. What reaches it is written whole or not
@@ -189,10 +184,11 @@
 //!
 //! - [`pool`] — connection pool and migration runner.
 //! - [`data_migrations`] — the one-shot data steps `evalhub migrate` runs
-//!   after the SQL migrations (`0003_runs_split`: 0.1.x run bodies to rows).
+//!   after the SQL migrations (`0003_runs_split`: 0.1.x run bodies to rows,
+//!   with the 1.0 → 2.0 conversion in [`data_migrations::v1`]).
 //! - [`auth`] — users, namespaces and tokens: the identity rows.
 //! - [`records`] — names, versions, labels, tombstones, idempotent create,
-//!   the 1.0 → 2.0 split at ingest, the run summary of an Eval.
+//!   the run summary of an Eval.
 //! - [`runs`] — run rows: put, batch, get, archive, delete, `runs_hash`,
 //!   and the run projection joined with Cards' judgements.
 //! - [`objects`] — attachment lifecycle: presign, confirm, reference count, GC.

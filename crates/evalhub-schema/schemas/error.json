@@ -96,7 +96,7 @@
           "const": "registry_entry_exists"
         },
         {
-          "description": "An `evalhub.eval/2.0` Eval header carries `runs`. Runs are not part\nof the header; they are written one by one or in a batch.",
+          "description": "An `evalhub.eval/2.0` Eval header carries `runs`, or the body\ndeclares `evalhub.eval/1.0` (with or without `runs`). Runs are not\npart of the header; they are written one by one or in a batch.",
           "type": "string",
           "const": "runs_moved"
         },

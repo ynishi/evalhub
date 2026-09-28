@@ -31,7 +31,6 @@
 //! | -------------------------------------- | ---------------------- |
 //! | `evalhub.card/1.1`, `evalhub.card/1.0` | `schemas/card.json`    |
 //! | `evalhub.eval/2.0`                     | `schemas/eval-2.json`  |
-//! | `evalhub.eval/1.0`                     | `schemas/eval.json`    |
 //! | anything else, or no `schema` key      | the kind's current one |
 //!
 //! The last row is what makes an unknown identifier an error: the current
@@ -52,9 +51,8 @@
 //! the validator opts in, and the validators opt in, so a value the served
 //! schema marks `"format": "date-time"` must be an RFC 3339 date-time, or
 //! it is a `schema` error at its path. The fields that carry it are a run's
-//! `started_at` and `ended_at` (`schemas/run.json`), and the same fields on
-//! `runs[]` of an Eval 1.0 body (`schemas/eval.json`). Card and Eval 2.0
-//! have no `date-time` field.
+//! `started_at` and `ended_at` (`schemas/run.json`). Card and Eval have no
+//! `date-time` field.
 //!
 //! The check is the `jsonschema` crate's `date-time`: a `T` (or `t`)
 //! between date and time, seconds present, and a `Z` or `±hh:mm` offset. A
@@ -71,25 +69,24 @@
 //! unknown formats are ignored, so they stay annotations; `type` and
 //! `minimum` already carry what they say.
 //!
-//! # The two Eval arms
+//! # Runs are not part of an Eval body
 //!
-//! Release 0.2.0 accepts two majors of the Eval schema
-//! ([`crate::eval::EvalSchema`]):
+//! An Eval body is an `evalhub.eval/2.0` header. Runs are not part of it;
+//! they are written one by one (`PUT /evals/{ns}/{name}/runs/{run_id}`) or
+//! in a batch (`POST /evals/{ns}/{name}/runs:batch`). Two bodies are
+//! answered with one error, `runs_moved` at `/runs`, *before* the
+//! structural pass, and nothing else:
 //!
-//! - **2.0** (`evalhub.eval/2.0`) is a header. Runs are not part of it; they
-//!   are written one by one (`PUT /evals/{ns}/{name}/runs/{run_id}`) or in
-//!   a batch (`POST /evals/{ns}/{name}/runs:batch`). A 2.0 body that has a
-//!   `runs` key at all, whatever its value, is answered with one error,
-//!   `runs_moved` at `/runs`, *before* the structural pass, and nothing
-//!   else: every other error the body might have would be noise next to
-//!   "this is the wrong endpoint for your runs", and the producer that
-//!   sends `runs` is typically a 1.0 producer that bumped the identifier.
-//! - **1.0** (`evalhub.eval/1.0`) is the old shape with `runs[]` in the
-//!   body, validated as 0.1.x validated it, including the check that each
-//!   `runs[].calls` and `runs[].artifacts[]` names an `attachments[].path`
-//!   of the body. That check exists for the 1.0 arm only. A 1.0 body that
-//!   passes is converted into a 2.0 header and its runs by
-//!   [`crate::eval::split_v1`]; release 0.3.0 removes the arm.
+//! - an `evalhub.eval/2.0` body that has a `runs` key at all, whatever its
+//!   value;
+//! - a body that declares `evalhub.eval/1.0`, with or without `runs`. That
+//!   is the 0.1.x shape, header and `runs[]` in one body. Releases 0.2.0
+//!   and 0.3.0 accepted it and converted it at ingest; release 0.4.0
+//!   refuses it.
+//!
+//! Every other error such a body might have would be noise next to "this
+//! is the wrong endpoint for your runs", and the producer that sends it is
+//! typically a 1.0 producer, whether or not it bumped the identifier.
 //!
 //! # Pass 2: semantic
 //!
@@ -100,7 +97,6 @@
 //! | `results` non-empty ⇒ `counts` present                                                 | `counts_missing`           |
 //! | `counts.attempted >= completed + failed + skipped + errored`                           | `counts_inconsistent`      |
 //! | every `results[].samples_ref` is an `attachments[].path`                               | `attachment_ref_unknown`   |
-//! | Eval 1.0 only: every `runs[].calls`, `runs[].artifacts[]` is an `attachments[].path`   | `attachment_ref_unknown`   |
 //! | `attachments[].path` unique, relative, contains no `..`                                | `attachment_path_invalid`  |
 //! | `results[].metric` matches `{ns}/{name}`                                               | `metric_id_invalid`        |
 //! | `run_results[].metric` matches `{ns}/{name}`                                           | `metric_id_invalid`        |
@@ -177,10 +173,13 @@ use std::sync::OnceLock;
 use jsonschema::{Draft, Validator};
 use serde_json::{Map, Value};
 
-use evalhub_schema::RecordKind;
 use evalhub_schema::error::{ErrorCode, ErrorEntry};
+use evalhub_schema::{EVAL_SCHEMA, RecordKind};
 
-use crate::eval::{EvalSchema, declared_schema};
+/// The Eval identifier of the 0.1.x shape, header and `runs[]` in one
+/// body. Refused with `runs_moved` since release 0.4.0; see "Runs are not
+/// part of an Eval body" in the module doc.
+const EVAL_SCHEMA_1_0: &str = "evalhub.eval/1.0";
 
 /// Largest integer a JSON number may carry without losing precision as a
 /// double: 2^53.
@@ -267,22 +266,25 @@ pub fn parse_relation_target(s: &str) -> Option<RelationTarget> {
 ///
 /// The JSON Schema is the one for the identifier the body declares in
 /// `schema` (see the module doc). An `evalhub.eval/2.0` body with a `runs`
-/// key returns exactly one error, `runs_moved` at `/runs`, and nothing
-/// else. Cost: one pass of the compiled validator plus one walk of the
-/// value; the validator is compiled on the first call for its identifier.
+/// key, and an Eval body declaring `evalhub.eval/1.0`, return exactly one
+/// error, `runs_moved` at `/runs`, and nothing else. Cost: one pass of the
+/// compiled validator plus one walk of the value; the validator is
+/// compiled on the first call for its identifier.
 pub fn validate(kind: RecordKind, value: &Value) -> Vec<ErrorEntry> {
-    let eval_schema = match kind {
-        RecordKind::Eval => declared_schema(value),
-        RecordKind::Card => None,
-    };
-    if eval_schema == Some(EvalSchema::V2) && value.get("runs").is_some() {
+    let declared = value.get("schema").and_then(Value::as_str);
+    let runs_moved_here = kind == RecordKind::Eval
+        && match declared {
+            Some(EVAL_SCHEMA_1_0) => true,
+            Some(EVAL_SCHEMA) => value.get("runs").is_some(),
+            _ => false,
+        };
+    if runs_moved_here {
         return vec![runs_moved()];
     }
-    let declared = value.get("schema").and_then(Value::as_str);
     let mut errors = Vec::new();
     structural(record_validator(kind, declared), value, &mut errors);
     numbers("", value, &mut errors);
-    semantic(kind, eval_schema, value, &mut errors);
+    semantic(kind, value, &mut errors);
     sort(&mut errors);
     errors
 }
@@ -305,15 +307,17 @@ pub fn run(run_id: &str, value: &Value) -> Vec<ErrorEntry> {
     errors
 }
 
-/// The one error a 2.0 header carrying `runs` gets.
+/// The one error a 2.0 header carrying `runs`, or a body declaring
+/// `evalhub.eval/1.0`, gets.
 fn runs_moved() -> ErrorEntry {
     ErrorEntry {
         path: "/runs".to_string(),
         code: ErrorCode::RunsMoved,
         hint: Some(
-            "an evalhub.eval/2.0 header does not carry runs; write each run with \
-             PUT /evals/{ns}/{name}/runs/{run_id}, or several with \
-             POST /evals/{ns}/{name}/runs:batch"
+            "an Eval body is an evalhub.eval/2.0 header, the only Eval schema \
+             accepted (evalhub.eval/1.0 is not), and it does not carry runs; \
+             write each run with PUT /evals/{ns}/{name}/runs/{run_id}, or \
+             several with POST /evals/{ns}/{name}/runs:batch"
                 .to_string(),
         ),
     }
@@ -553,12 +557,7 @@ fn given(obj: &Map<String, Value>, key: &str) -> bool {
     obj.get(key).is_some_and(|v| !v.is_null())
 }
 
-fn semantic(
-    kind: RecordKind,
-    eval_schema: Option<EvalSchema>,
-    value: &Value,
-    out: &mut Vec<ErrorEntry>,
-) {
+fn semantic(kind: RecordKind, value: &Value, out: &mut Vec<ErrorEntry>) {
     let Some(obj) = value.as_object() else {
         return;
     };
@@ -605,24 +604,6 @@ fn semantic(
             }
         }
         run_results(obj, out);
-    }
-
-    // The 1.0 arm only: runs in the body point into the body's attachments.
-    if eval_schema == Some(EvalSchema::V1)
-        && let Some(runs) = obj.get("runs").and_then(Value::as_array)
-    {
-        for (i, run) in runs.iter().enumerate() {
-            if let Some(c) = run.get("calls").and_then(Value::as_str) {
-                ref_known(&paths, out, format!("/runs/{i}/calls"), c);
-            }
-            if let Some(artifacts) = run.get("artifacts").and_then(Value::as_array) {
-                for (j, a) in artifacts.iter().enumerate() {
-                    if let Some(a) = a.as_str() {
-                        ref_known(&paths, out, format!("/runs/{i}/artifacts/{j}"), a);
-                    }
-                }
-            }
-        }
     }
 
     if let Some(relations) = obj.get("relations").and_then(Value::as_array) {

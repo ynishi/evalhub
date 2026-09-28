@@ -20,9 +20,8 @@
 
 	let { kind }: { kind: Kind } = $props();
 
-	// `/schemas/eval` stays the 1.0 document (header and `runs[]` in one)
-	// for the compatibility release; the stored Eval is the 2.0 header,
-	// which is what a record query ranges over.
+	// An Eval's schema is `eval-2`, the 2.0 header: the stored Eval, which
+	// is what a record query ranges over.
 	const schemaName = $derived(kind === 'cards' ? 'card' : 'eval-2');
 	const singular = $derived(kind === 'cards' ? 'Card' : 'Eval');
 

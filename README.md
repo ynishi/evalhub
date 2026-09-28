@@ -87,11 +87,11 @@ start until `evalhub migrate` has brought the schema current.
 ## API
 
 Everything is under `/api/v1`; the contract is `GET /openapi.json` (OpenAPI
-3.1) and the record schemas are `GET /schemas/{card|eval-2|run|eval|error|query}`.
+3.1) and the record schemas are `GET /schemas/{card|eval-2|run|error|query}`.
 `eval-2` is the Eval header (`evalhub.eval/2.0`) and `run` one run;
 `card` covers `evalhub.card/1.1` and the `evalhub.card/1.0` it still
-accepts; `eval` stays the 0.1.x document (`evalhub.eval/1.0`, with
-`runs[]`) that 0.2.0 still accepts, until 0.3.0 removes it.
+accepts. `GET /schemas/eval`, the 0.1.x document (`evalhub.eval/1.0`, with
+`runs[]`), was served by 0.2.0 and 0.3.0 and was removed in 0.4.0.
 Writes need `Authorization: Bearer <token>` with `write` on the namespace;
 reads of public records need nothing, and private records are `404` to
 anyone the token does not cover. A token acts only in the namespaces it
@@ -104,7 +104,7 @@ covers it.
 
 | Method   | Path                                            | Does                                                                                     |
 | -------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `POST`   | `/{cards\|evals}/{ns}/{name}?label=`            | Validate, canonicalise and append a version. `201` with `{ id, version_id, seq, label, content_hash, created_at, changed[], badges[] }`; `200` and the existing version when the canonical body equals the latest; `422 { errors[] }` with every violation; `409 attachment_missing` or `label_in_use`. An Eval header carrying `runs` is `422 runs_moved` (runs are written below); a Card with more `run_results` than `limits.run_results` is `422 too_many_run_results`. |
+| `POST`   | `/{cards\|evals}/{ns}/{name}?label=`            | Validate, canonicalise and append a version. `201` with `{ id, version_id, seq, label, content_hash, created_at, changed[], badges[] }`; `200` and the existing version when the canonical body equals the latest; `422 { errors[] }` with every violation; `409 attachment_missing` or `label_in_use`. An Eval header carrying `runs`, and any body declaring `evalhub.eval/1.0`, is `422 runs_moved` (runs are written below); a Card with more `run_results` than `limits.run_results` is `422 too_many_run_results`. |
 | `GET`    | `/{cards\|evals}/{ns}/{name}[@{seq}\|@{label}]` | The latest live version, or one addressed by sequence number or label, with the canonical `record`. `?expand=fingerprints,badges,changed` adds the hub's derived facts. A tombstoned version comes back with `tombstone` and no `record`. An Eval also carries `runs: { count, by_status, archived, deleted, runs_hash }` (the same at every `@seq`; `archived` / `deleted` for members of the namespace only). Card judgements of an Eval the reader may not see are removed and counted in `withheld.run_results`. |
 | `GET`    | `/{cards\|evals}/{ns}/{name}/versions`          | Every version, oldest first, tombstones included, without bodies.                          |
 | `PATCH`  | `/{cards\|evals}/{ns}/{name}@{seq}/label`       | Point a label at that version. Labels are unique within the name and never purely numeric. |
@@ -112,11 +112,9 @@ covers it.
 | `DELETE` | `/{cards\|evals}/{ns}/{name}@{seq}`             | Tombstone with `{ "reason": "withdrawn\|duplicate\|takedown\|other", "note": … }`. The body goes; the version id, the content hash and `changed[]` stay. |
 | `GET`    | `/{cards\|evals}?ns&search&sort&cursor&limit`   | Page over names with a live version. `sort` is `created_desc` (default), `created_asc` or `name_asc`; paging is by opaque cursor. |
 
-**The `evalhub.eval/1.0` body is deprecated.** 0.2.0 still accepts a
-0.1.x Eval body (header and `runs[]` in one) on `POST /evals/{ns}/{name}`:
-it is stored as a 2.0 header plus run rows, and the response carries a
-`Deprecation` header, `converted_from: "evalhub.eval/1.0"` and
-`converted_runs`. **0.3.0 removes this**; post the header, then the runs
+**The `evalhub.eval/1.0` body is refused.** A 0.1.x Eval body (header
+and `runs[]` in one) on `POST /evals/{ns}/{name}` is `422` with the single
+error `runs_moved`, with or without `runs`; post the header, then the runs
 (see Upgrading from 0.1.x, below).
 
 ### Runs
@@ -268,16 +266,20 @@ verdict on a run is the Card's. What a 0.1.x client changes:
 | `"schema": "evalhub.eval/1.0"`                          | `"schema": "evalhub.eval/2.0"` (`GET /schemas/eval-2`)                                   |
 | `"schema": "evalhub.card/1.0"`                          | `"schema": "evalhub.card/1.1"`, which adds `run_results`; `evalhub.card/1.0` is still accepted |
 
-A 1.0 Eval body with `runs[]` is accepted by 0.2.0 only: it is converted
-into a 2.0 header and run rows, and the response carries a `Deprecation`
-header. 0.3.0 refuses it with `422 runs_moved`, as 0.2.0 already refuses a
-2.0 header that carries `runs`. Two things a 1.0 client will notice in
-0.2.0 already:
+A 1.0 Eval body was accepted for a compatibility window, by 0.2.0 and
+0.3.0: it was converted into a 2.0 header and run rows, and the response
+carried a `Deprecation` header, `converted_from: "evalhub.eval/1.0"` and
+`converted_runs`. Two things a 1.0 client noticed in that window:
 
-- the `content_hash` it gets back is the converted 2.0 header's, not the
+- the `content_hash` it got back was the converted 2.0 header's, not the
   hash of the body it posted;
-- re-posting a body that leaves a run out no longer drops that run. Runs
-  are rows now; archive (`PATCH …/runs/{run_id}`) or delete it.
+- re-posting a body that left a run out no longer dropped that run. Runs
+  are rows; archive (`PATCH …/runs/{run_id}`) or delete it.
+
+The window closed in 0.4.0: a body declaring `evalhub.eval/1.0` is refused
+with `422 runs_moved`, with or without `runs`, as a 2.0 header that carries
+`runs` is, and `GET /schemas/eval` is gone (`404`). The mapping above
+stays as the record of what changed.
 
 On a hosted database, `evalhub migrate` for 0.2.0 does the same
 conversion to every stored Eval once (`docs/hosting.md`, "Upgrading to

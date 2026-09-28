@@ -1,5 +1,5 @@
 //! The used set: which runs of an Eval a Card version used, fixed when the
-//! Card version is posted ([`crate::records::ingest`]) or when a
+//! Card version is posted ([`crate::records::create_or_append`]) or when a
 //! `core/uses_eval` edge is added to it later ([`crate::relations::add`]).
 //!
 //! The rule is `evalhub_schema::card`'s "The used set", applied per Eval

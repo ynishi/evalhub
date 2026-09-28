@@ -46,10 +46,13 @@
 //! runs inside (`runs[]`). Release 0.2.0 stores the header as the version
 //! body (`evalhub.eval/2.0`) and each run as a row of `runs`
 //! ([`crate::runs`]). This step moves stored 1.0 bodies to that shape.
-//! Every conversion goes through `evalhub_core::eval::split_v1`, the one
-//! implementation that the 1.0 ingest ([`crate::records::ingest`]) uses
-//! too, so a run migrated here and the same run posted as 1.0 to 0.2.0 are
-//! the same bytes with the same hash.
+//! Every conversion goes through [`v1::split_v1`], the one implementation,
+//! which the 1.0 ingest of releases 0.2.0 and 0.3.0 used too, so a run
+//! migrated here and the same run posted as 1.0 to those releases are the
+//! same bytes with the same hash. Release 0.4.0 refuses a 1.0 body on
+//! `POST`, and the public crates no longer describe the 1.0 shape; [`v1`]
+//! is this migration's own reading of it, kept because a 0.1.x database
+//! must still migrate.
 //!
 //! Per Eval record, in `records.id` order, under the record row's
 //! `FOR UPDATE` (the lock every header and run write takes):
@@ -171,13 +174,14 @@
 //! commits, which is why the hosting runbook (`docs/hosting.md`) stops the
 //! serving Machine for the 0.2.0 deploy.
 
+pub mod v1;
+
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use serde_json::Value;
 use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
-use evalhub_core::eval::{EvalSchema, SplitV1, declared_schema, split_v1};
 use evalhub_core::run::run_content_hash;
 use evalhub_core::validate::{MAX_RUN_ID_BYTES, is_valid_run_id};
 
@@ -186,6 +190,7 @@ use crate::error::StoreError;
 use crate::records::Actor;
 use crate::relations::USES_EVAL;
 use crate::used_set::{UsedSet, UsesEval};
+use v1::{SplitV1, declares_v1, split_v1};
 
 /// The name of the 0.1.x → 0.2.0 run split, as recorded in
 /// `data_migrations.name`. See the module doc.
@@ -364,7 +369,7 @@ async fn runs_split(tx: &mut Transaction<'_, Postgres>) -> Result<RunsSplitStats
             let Some(body) = v.body else {
                 continue;
             };
-            if declared_schema(&body) != Some(EvalSchema::V1) {
+            if !declares_v1(&body) {
                 live.insert(v.version_id, None);
                 continue;
             }
@@ -373,7 +378,7 @@ async fn runs_split(tx: &mut Transaction<'_, Postgres>) -> Result<RunsSplitStats
             let split = split_v1(&body);
             if !split.duplicate_run_ids.is_empty() {
                 // 0.1.x accepted a repeated run_id; the last element wins,
-                // as at the 1.0 ingest. Not a reason to stop.
+                // as at the 0.2.0 / 0.3.0 ingest. Not a reason to stop.
                 tracing::warn!(version = %at, run_ids = ?split.duplicate_run_ids,
                     "repeated run_id in runs[]; the last element was kept");
             }
