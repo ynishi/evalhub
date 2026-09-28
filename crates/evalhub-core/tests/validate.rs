@@ -221,3 +221,62 @@ fn a_run_integer_outside_2_53_is_number_too_large() {
     assert_eq!(errors[0].code, ErrorCode::NumberTooLarge);
     assert_eq!(errors[0].path, "/metrics/core~1tokens_out");
 }
+
+#[test]
+fn a_date_time_that_is_not_rfc_3339_is_a_schema_error_at_its_path() {
+    let cases = [
+        (
+            "run started_at",
+            validate::run(
+                "r1",
+                &json!({"run_id": "r1", "status": "ok", "started_at": "yesterday"}),
+            ),
+            "/started_at",
+        ),
+        (
+            "run ended_at",
+            validate::run(
+                "r1",
+                &json!({"run_id": "r1", "status": "ok", "ended_at": "2026-09-20"}),
+            ),
+            "/ended_at",
+        ),
+        (
+            "run started_at with a space for the T",
+            validate::run(
+                "r1",
+                &json!({"run_id": "r1", "status": "ok", "started_at": "2026-09-20 10:00:00Z"}),
+            ),
+            "/started_at",
+        ),
+        (
+            "eval 1.0 runs[].started_at",
+            validate(RecordKind::Eval, &read("eval-v1-started-at-invalid.json")),
+            "/runs/0/started_at",
+        ),
+    ];
+    let mut wrong = Vec::new();
+    for (what, errors, path) in cases {
+        let got: Vec<_> = errors.iter().map(|e| (e.path.as_str(), e.code)).collect();
+        if got != [(path, ErrorCode::Schema)] {
+            wrong.push(format!("{what}: got {got:?}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+#[test]
+fn an_rfc_3339_date_time_with_an_offset_or_a_fraction_is_valid() {
+    for t in [
+        "2026-09-20T10:00:00Z",
+        "2026-09-20T10:00:00.123456Z",
+        "2026-09-20T19:00:00+09:00",
+        "2026-09-20t10:00:00z",
+    ] {
+        let errors = validate::run(
+            "r1",
+            &json!({"run_id": "r1", "status": "ok", "started_at": t}),
+        );
+        assert!(errors.is_empty(), "{t}: {errors:?}");
+    }
+}

@@ -288,6 +288,80 @@ async fn an_ext_key_without_a_namespace_is_refused_on_records_and_runs() {
     assert_eq!(body["errors"][0]["path"], "/ext/notes", "{body}");
 }
 
+/// A timestamp the schema marks `date-time` that is not RFC 3339 is
+/// `422 schema` at its path: on `PUT …/runs/{id}`, in a batch, and in the
+/// `runs[]` of a 1.0 body on `POST /evals/…`. Nothing is written.
+#[tokio::test]
+async fn a_timestamp_that_is_not_rfc_3339_is_a_schema_error() {
+    let (hub, alice) = hub_with_eval(Hub::start().await).await;
+    let at = |body: &Value| -> Vec<(String, String)> {
+        body["errors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| {
+                (
+                    e["path"].as_str().unwrap().to_string(),
+                    e["code"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect()
+    };
+    let one = |path: &str| vec![(path.to_string(), "schema".to_string())];
+
+    for (key, bad) in [("started_at", "yesterday"), ("ended_at", "2026-09-20")] {
+        let mut run = json!({"run_id": "r1", "status": "ok"});
+        run[key] = json!(bad);
+        let (status, body) = hub
+            .call(
+                Method::PUT,
+                &format!("/api/v1/evals/{EVAL_NAME}/runs/r1"),
+                Some(&alice),
+                Some(&run.to_string()),
+            )
+            .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(at(&body), one(&format!("/{key}")), "{body}");
+    }
+
+    let batch = json!({"runs": [
+        {"run_id": "b1", "status": "ok", "started_at": "2026-09-20T10:00:00Z"},
+        {"run_id": "b2", "status": "ok", "started_at": "yesterday"},
+    ]});
+    let (status, body) = hub
+        .call(
+            Method::POST,
+            &format!("/api/v1/evals/{EVAL_NAME}/runs:batch"),
+            Some(&alice),
+            Some(&batch.to_string()),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(at(&body), one("/runs/1/started_at"), "{body}");
+
+    let (_, page) = get(
+        &hub,
+        &format!("/api/v1/evals/{EVAL_NAME}/runs"),
+        Some(&alice),
+    )
+    .await;
+    assert_eq!(page["items"], json!([]), "nothing was written: {page}");
+
+    hub.ready_attachments(common::EVAL_V1).await;
+    let mut v1: Value = serde_json::from_str(common::EVAL_V1).unwrap();
+    v1["runs"][0]["started_at"] = json!("yesterday");
+    let (status, body) = hub
+        .call(
+            Method::POST,
+            "/api/v1/evals/alice/legacy-bad-time",
+            Some(&alice),
+            Some(&v1.to_string()),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(at(&body), one("/runs/0/started_at"), "{body}");
+}
+
 /// A batch with invalid elements writes nothing and lists every failing
 /// element by index; a valid batch writes all.
 #[tokio::test]
