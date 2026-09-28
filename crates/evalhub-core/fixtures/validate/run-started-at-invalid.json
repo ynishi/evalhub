@@ -1,0 +1,9 @@
+{
+  "run_id": "r1",
+  "body": {
+    "run_id": "r1",
+    "status": "ok",
+    "started_at": "yesterday",
+    "ended_at": "2026-09-20T10:02:11Z"
+  }
+}

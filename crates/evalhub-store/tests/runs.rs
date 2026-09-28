@@ -305,23 +305,67 @@ async fn put_creates_then_is_idempotent_then_updates() {
 }
 
 #[tokio::test]
-async fn an_unparseable_timestamp_is_kept_in_the_body_and_null_in_the_column() {
+async fn an_unparseable_timestamp_is_refused_at_its_path_and_nothing_is_stored() {
     let db = common::db().await;
     let pool = &db.pool;
     let record_id = setup(pool, "e").await.outcome.meta().record_id;
-    let run = json!({"run_id": "r1", "status": "ok", "started_at": "yesterday"});
-    let out = runs::put(pool, "alice", "e", "r1", &run, Actor::default())
+    for (key, bad) in [("started_at", "yesterday"), ("ended_at", "2026-09-20")] {
+        let mut run = json!({"run_id": "r1", "status": "ok"});
+        run[key] = json!(bad);
+        let err = runs::put(pool, "alice", "e", "r1", &run, Actor::default())
+            .await
+            .unwrap_err();
+        let r = rejections(err);
+        assert_eq!(r.len(), 1, "{key}");
+        let got: Vec<_> = r[0]
+            .errors
+            .iter()
+            .map(|e| (e.path.as_str(), e.code))
+            .collect();
+        assert_eq!(got, [(format!("/{key}").as_str(), ErrorCode::Schema)]);
+    }
+    assert_eq!(
+        count(
+            pool,
+            "SELECT COUNT(*) FROM runs WHERE record_id = $1",
+            record_id
+        )
+        .await,
+        0
+    );
+}
+
+#[tokio::test]
+async fn an_accepted_run_with_a_timestamp_always_fills_the_column() {
+    let db = common::db().await;
+    let pool = &db.pool;
+    let record_id = setup(pool, "e").await.outcome.meta().record_id;
+    let forms = [
+        "2026-09-20T10:00:00Z",
+        "2026-09-20T19:00:00+09:00",
+        "2026-09-20t10:00:00z",
+        "2026-09-20T10:00:00.123456789012Z",
+        "2016-12-31T23:59:60Z",
+    ];
+    for (i, t) in forms.iter().enumerate() {
+        let run_id = format!("r{i}");
+        let run = json!({"run_id": run_id, "status": "ok", "started_at": t, "ended_at": t});
+        runs::put(pool, "alice", "e", &run_id, &run, Actor::default())
+            .await
+            .unwrap_or_else(|e| panic!("{t}: {e:?}"));
+        let (started, ended): (
+            Option<chrono::DateTime<chrono::Utc>>,
+            Option<chrono::DateTime<chrono::Utc>>,
+        ) = sqlx::query_as(
+            "SELECT started_at, ended_at FROM runs WHERE record_id = $1 AND run_id = $2",
+        )
+        .bind(record_id)
+        .bind(&run_id)
+        .fetch_one(pool)
         .await
         .unwrap();
-    assert_eq!(out.runs[0].change, RunChange::Created);
-    let (column, body): (Option<chrono::DateTime<chrono::Utc>>, Value) =
-        sqlx::query_as("SELECT started_at, body FROM runs WHERE record_id = $1 AND run_id = 'r1'")
-            .bind(record_id)
-            .fetch_one(pool)
-            .await
-            .unwrap();
-    assert_eq!(column, None);
-    assert_eq!(body["started_at"], "yesterday");
+        assert!(started.is_some() && ended.is_some(), "{t}: column is NULL");
+    }
 }
 
 #[tokio::test]

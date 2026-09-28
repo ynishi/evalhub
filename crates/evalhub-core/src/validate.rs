@@ -46,6 +46,31 @@
 //! `$ref` in the schema is local (`#/$defs/…`), and a reference that would
 //! need fetching is a build error, not a fetch.
 //!
+//! ## Formats
+//!
+//! `format` is an assertion. Draft 2020-12 makes it an annotation unless
+//! the validator opts in, and the validators opt in, so a value the served
+//! schema marks `"format": "date-time"` must be an RFC 3339 date-time, or
+//! it is a `schema` error at its path. The fields that carry it are a run's
+//! `started_at` and `ended_at` (`schemas/run.json`), and the same fields on
+//! `runs[]` of an Eval 1.0 body (`schemas/eval.json`). Card and Eval 2.0
+//! have no `date-time` field.
+//!
+//! The check is the `jsonschema` crate's `date-time`: a `T` (or `t`)
+//! between date and time, seconds present, and a `Z` or `±hh:mm` offset. A
+//! value that passes it also parses with `DateTime::parse_from_rfc3339`,
+//! which is what fills the store's `runs.started_at` / `ended_at` columns,
+//! so an accepted run with a timestamp always has the column. The
+//! separator between date and time must be `T` (or `t`), as RFC 3339 §5.6
+//! has it; a space is refused, although `parse_from_rfc3339` would parse
+//! it.
+//!
+//! The other `format` values in the generated schemas are the numeric
+//! hints schemars emits for Rust integer and float types (`double`,
+//! `int64`, `uint32`, `uint64`). They are not formats the crate knows, and
+//! unknown formats are ignored, so they stay annotations; `type` and
+//! `minimum` already carry what they say.
+//!
 //! # The two Eval arms
 //!
 //! Release 0.2.0 accepts two majors of the Eval schema
@@ -306,10 +331,17 @@ fn sort(errors: &mut [ErrorEntry]) {
 /// Compile a generated schema. The generated schemas only reference
 /// `#/$defs/*`; `offline()` turns any other reference into a build failure
 /// here, which the unit tests exercise, rather than a fetch in production.
+///
+/// `format` is asserted, not annotated (see "Formats" in the module doc).
+/// Unknown formats stay ignored: that is the crate's default, and it is set
+/// here explicitly because schemars emits numeric hints (`double`, `int64`,
+/// `uint32`, `uint64`) that are not formats the crate knows.
 fn compile(schema: &Value) -> Validator {
     #[allow(clippy::expect_used)]
     jsonschema::options()
         .with_draft(Draft::Draft202012)
+        .should_validate_formats(true)
+        .should_ignore_unknown_formats(true)
         .offline()
         .build(schema)
         .expect("the generated schema compiles")

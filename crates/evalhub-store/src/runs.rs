@@ -62,12 +62,21 @@
 //! # Timestamps
 //!
 //! `started_at` and `ended_at` are copied from the body into
-//! `timestamptz` columns for filtering and sorting. A body value that is
-//! not an RFC 3339 date-time is accepted (the JSON Schema declares
-//! `format: date-time`, but Draft 2020-12 formats are annotations, not
-//! assertions, in the core validator), kept verbatim in the body, and
-//! leaves the column NULL, so the run sorts and filters as one with no
-//! timestamp. The content hash covers the string as sent.
+//! `timestamptz` columns for filtering and sorting. The core validator
+//! asserts the schema's `format: date-time`, so a body value that is not
+//! an RFC 3339 date-time is refused in step 2 with `schema` at
+//! `/started_at` or `/ended_at`, and nothing is written. A value that
+//! passes also parses with `DateTime::parse_from_rfc3339`, so for an
+//! accepted run the column is NULL exactly when the body has no value
+//! (the key is absent or `null`). The body keeps the string as sent, and
+//! the content hash covers it. The separator between date and time must
+//! be `T` (or `t`), as RFC 3339 §5.6 has it; a space is refused, although
+//! `parse_from_rfc3339` would parse it, so a body 0.3.0 accepted with a
+//! space is now a `schema` error.
+//!
+//! Runs stored by 0.3.0 or earlier were not checked, and may keep a
+//! non-RFC 3339 string with a NULL column. Reads do not re-validate, so
+//! they are served as stored; writing such a body again is refused.
 //!
 //! # Materialisation
 //!
