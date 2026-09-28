@@ -877,8 +877,8 @@ export interface components {
             runs_used: number;
             /**
              * @description The Card's harness fingerprint equals that of every run in its used
-             *     set for this Eval (with an empty used set, the Eval version's
-             *     header fingerprint). `false` when any differs or is missing.
+             *     set for this Eval. `false` when any differs or is missing, or when
+             *     the used set is empty (`runs_used` is 0: no run to agree with).
              */
             same_harness: boolean;
             /** @description As `same_harness`, for the model fingerprint. */

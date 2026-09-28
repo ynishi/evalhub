@@ -258,7 +258,7 @@ expression: body
             "type": "integer"
           },
           "same_harness": {
-            "description": "The Card's harness fingerprint equals that of every run in its used\nset for this Eval (with an empty used set, the Eval version's\nheader fingerprint). `false` when any differs or is missing.",
+            "description": "The Card's harness fingerprint equals that of every run in its used\nset for this Eval. `false` when any differs or is missing, or when\nthe used set is empty (`runs_used` is 0: no run to agree with).",
             "type": "boolean"
           },
           "same_model": {

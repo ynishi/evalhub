@@ -70,9 +70,10 @@
 //!
 //! The hub does not rank the groups or the Cards in them. `same_harness`
 //! and `same_model` say whether each Card's harness and model fingerprints
-//! equal those of every run the Card used from this Eval (its used set;
-//! with an empty used set, the Eval version's header), and that is the
-//! whole of its opinion.
+//! equal those of every run the Card used from this Eval (its used set).
+//! An empty used set gives false for both, with `runs_used: 0`: the Card
+//! was compared with no run. The Eval version's header is never compared.
+//! That is the whole of its opinion.
 //!
 //! # What each Card used
 //!
@@ -474,8 +475,8 @@ pub struct ComparisonRowDto {
     /// Per-facet fingerprints, hex, keyed by facet name.
     pub fingerprints: BTreeMap<String, String>,
     /// The Card's harness fingerprint equals that of every run in its used
-    /// set for this Eval (with an empty used set, the Eval version's
-    /// header fingerprint). `false` when any differs or is missing.
+    /// set for this Eval. `false` when any differs or is missing, or when
+    /// the used set is empty (`runs_used` is 0: no run to agree with).
     pub same_harness: bool,
     /// As `same_harness`, for the model fingerprint.
     pub same_model: bool,

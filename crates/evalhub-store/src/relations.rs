@@ -75,14 +75,16 @@
 //! Card used: `same_harness` / `same_model` is true when the Card's
 //! fingerprint equals that of *every* run in its used set for the Eval
 //! record, and false when any used run's differs or is missing, or the
-//! Card has none. A Card with an empty used set (the Eval had no runs when
-//! it was posted, or its edge did not resolve then, so nothing was
-//! recorded) is compared with the Eval version's header instead, which is
-//! what the view did before runs were rows and what an Eval without runs
-//! still means. Each row also carries the used set's summary: `runs_used`,
-//! `used_set_hash` (the `evalhub_core::run::runs_hash` formula over the
-//! used runs' current content hashes) and `changed_since_card` (the used
-//! runs overwritten since the Card used them).
+//! Card has none. An empty used set (the Eval had no runs when the Card
+//! was posted, the Card's `attrs.runs` is an explicit `[]`, or its edge
+//! did not resolve then, so nothing was recorded) gives false for both:
+//! the Card was compared with no run, so it agrees with none. The Eval
+//! version's header fingerprint is never compared; `runs_used: 0` on the
+//! row says why the flags are false. Each row also carries the used
+//! set's summary: `runs_used`, `used_set_hash` (the
+//! `evalhub_core::run::runs_hash` formula over the used runs' current
+//! content hashes) and `changed_since_card` (the used runs overwritten
+//! since the Card used them).
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
@@ -284,9 +286,8 @@ pub struct ComparisonRow {
     pub fingerprints: BTreeMap<String, Vec<u8>>,
     /// The Card's harness fingerprint equals that of every run in its used
     /// set for this Eval; `false` when any used run's differs or is
-    /// missing, or the Card has none. With an empty used set, the Eval
-    /// version's header fingerprint is compared instead (see the module
-    /// doc).
+    /// missing, the Card has none, or the used set is empty (`runs_used`
+    /// is 0: the Card was compared with no run). See the module doc.
     pub same_harness: bool,
     /// As `same_harness`, for the model fingerprint.
     pub same_model: bool,
@@ -958,9 +959,10 @@ async fn fingerprints_of(
 /// its fingerprints, the `same_harness` / `same_model` flags over its used
 /// set, and the used set's summary. See the module doc.
 ///
-/// An empty used set (the Eval had no runs when the Card was posted, or
-/// the Card's `attrs.runs` is an explicit `[]`) compares with the Eval
-/// version's header fingerprint, as the view did before 0.2.0.
+/// An empty used set (the Eval had no runs when the Card was posted, the
+/// Card's `attrs.runs` is an explicit `[]`, or its edge did not resolve)
+/// gives `same_harness` / `same_model` false: there is no used run to
+/// agree with, and the Eval version's header is not compared.
 ///
 /// Cost: a handful of reads per Card, plus one read of every listed Card's
 /// used set for the Eval record.
@@ -972,7 +974,6 @@ pub async fn cards_using_eval(
     let Some(eval) = version_info(pool, eval_version_id).await? else {
         return Ok(Vec::new());
     };
-    let eval_fp = fingerprints_of(pool, eval_version_id).await?;
     let text = eval.text();
     let rows = sqlx::query!(
         "SELECT DISTINCT rel.from_version_id
@@ -1015,12 +1016,9 @@ pub async fn cards_using_eval(
             let Some(card) = fp.get(facet) else {
                 return false;
             };
-            if runs.is_empty() {
-                // No used run to compare with: the Eval had no runs when
-                // the Card was posted, or the edge did not resolve then.
-                return eval_fp.get(facet) == Some(card);
-            }
-            runs.iter().all(|r| of_run(r) == Some(card))
+            // An empty used set agrees with nothing: `all` over no run
+            // would say true for a Card compared with no run.
+            !runs.is_empty() && runs.iter().all(|r| of_run(r) == Some(card))
         };
         let same_harness = same("harness", |r| r.harness.as_ref());
         let same_model = same("model", |r| r.model.as_ref());
